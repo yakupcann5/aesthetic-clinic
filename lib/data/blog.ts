@@ -1,0 +1,96 @@
+import { BlogPost } from '../types';
+
+export const blogCategories = [
+    { value: 'all', label: 'Tümü' },
+    { value: 'Botoks', label: 'Botoks' },
+    { value: 'Dolgu', label: 'Dolgu' },
+    { value: 'Lazer', label: 'Lazer' },
+    { value: 'Cilt Bakımı', label: 'Cilt Bakımı' },
+    { value: 'PRP', label: 'PRP' },
+    { value: 'Peeling', label: 'Peeling' }
+];
+
+export function getBlogPostBySlug(slug: string) {
+    return blogPosts.find(post => post.slug === slug);
+}
+
+export const blogPosts: BlogPost[] = [
+    {
+        id: '1',
+        slug: 'botoks-hakkinda-bilinmesi-gerekenler',
+        title: 'Botoks Hakkında Bilinmesi Gerekenler',
+        excerpt: 'Botoks uygulaması öncesi ve sonrası dikkat edilmesi gereken önemli noktalar.',
+        content: `Botoks, yüz kırışıklıklarını azaltmak için kullanılan güvenli ve etkili bir yöntemdir...`,
+        author: 'Dr. Ayşe Yılmaz',
+        date: '2024-11-20',
+        category: 'Botoks',
+        image: '/images/blog/botox-guide.jpg',
+        tags: ['botoks', 'yüz estetiği', 'kırışıklık tedavisi'],
+        readTime: '5 dakika',
+    },
+    {
+        id: '2',
+        slug: 'dudak-dolgusu-oncesi-sonrasi',
+        title: 'Dudak Dolgusu: Öncesi ve Sonrası',
+        excerpt: 'Doğal görünümlü dudak dolgusu için ipuçları ve öneriler.',
+        content: `Dudak dolgusu, dudaklara hacim kazandıran ve şekil veren popüler bir estetik işlemdir...`,
+        author: 'Dr. Mehmet Demir',
+        date: '2024-11-18',
+        category: 'Dolgu',
+        image: '/images/blog/lip-filler.jpg',
+        tags: ['dudak dolgusu', 'hyaluronik asit', 'yüz estetiği'],
+        readTime: '6 dakika',
+    },
+    {
+        id: '3',
+        slug: 'lazer-epilasyon-rehberi',
+        title: 'Lazer Epilasyon: Kapsamlı Rehber',
+        excerpt: 'Lazer epilasyon hakkında merak edilen her şey: süreç, fiyatlar ve sonuçlar.',
+        content: `Lazer epilasyon, istenmeyen tüylerden kalıcı olarak kurtulmanın en etkili yoludur...`,
+        author: 'Dr. Zeynep Kaya',
+        date: '2024-11-15',
+        category: 'Lazer',
+        image: '/images/blog/laser-guide.jpg',
+        tags: ['lazer epilasyon', 'kalıcı tüy azaltma', 'cilt bakımı'],
+        readTime: '8 dakika',
+    },
+    {
+        id: '4',
+        slug: 'cilt-bakim-rutini',
+        title: 'Mükemmel Cilt Bakım Rutini',
+        excerpt: 'Sağlıklı ve parlak bir cilt için günlük bakım rutini önerileri.',
+        content: `Sağlıklı bir cilt için düzenli bakım rutini şarttır...`,
+        author: 'Dr. Ayşe Yılmaz',
+        date: '2024-11-12',
+        category: 'Cilt Bakımı',
+        image: '/images/blog/skincare.jpg',
+        tags: ['cilt bakımı', 'rutin', 'sağlıklı cilt'],
+        readTime: '7 dakika',
+    },
+    {
+        id: '5',
+        slug: 'prp-tedavisi-nedir',
+        title: 'PRP Tedavisi Nedir? Nasıl Uygulanır?',
+        excerpt: 'Kendi kanınızdan elde edilen plazma ile doğal gençleşme yöntemi.',
+        content: `PRP (Platelet Rich Plasma) tedavisi, kendi kanınızdan elde edilen büyüme faktörleri ile yapılan doğal bir tedavi yöntemidir...`,
+        author: 'Dr. Mehmet Demir',
+        date: '2024-11-08',
+        category: 'PRP',
+        image: '/images/blog/prp-treatment.jpg',
+        tags: ['prp', 'cilt gençleştirme', 'saç tedavisi'],
+        readTime: '6 dakika',
+    },
+    {
+        id: '6',
+        slug: 'kimyasal-peeling-leke-tedavisi',
+        title: 'Kimyasal Peeling ile Leke Tedavisi',
+        excerpt: 'Cilt lekelerinden kurtulmak için kimyasal peeling yöntemi.',
+        content: `Kimyasal peeling, cildin üst tabakasının kontrollü şekilde soyulması ile leke ve akne izlerinin tedavisidir...`,
+        author: 'Dr. Zeynep Kaya',
+        date: '2024-11-05',
+        category: 'Peeling',
+        image: '/images/blog/chemical-peel.jpg',
+        tags: ['kimyasal peeling', 'leke tedavisi', 'cilt yenileme'],
+        readTime: '5 dakika',
+    },
+];
