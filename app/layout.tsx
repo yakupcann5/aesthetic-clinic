@@ -1,10 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, Playfair_Display } from "next/font/google";
 import "./globals.css";
-import Header from "@/components/common/Header";
-import Footer from "@/components/common/Footer";
-import JsonLd from "@/components/seo/JsonLd";
-import { organizationJsonLd, webSiteJsonLd } from "@/lib/seo/jsonld";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -66,13 +62,7 @@ export default function RootLayout({
   return (
     <html lang="tr" className={`${inter.variable} ${playfair.variable}`}>
       <body className="antialiased bg-gradient-to-br from-primary-50 via-white to-primary-50 text-gray-900 font-sans">
-        <JsonLd data={organizationJsonLd()} />
-        <JsonLd data={webSiteJsonLd()} />
-        <Header />
-        <main className="pt-20">
-          {children}
-        </main>
-        <Footer />
+        {children}
       </body>
     </html>
   );

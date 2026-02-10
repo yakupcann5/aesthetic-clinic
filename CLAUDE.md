@@ -25,77 +25,88 @@ npm run lint         # ESLint check
 
 ```
 aesthetic-clinic/
-├── app/                          # Next.js App Router (pages & layouts)
-│   ├── layout.tsx                # Root layout (fonts, Header, Footer, JSON-LD)
-│   ├── page.tsx                  # Home page (Server Component)
-│   ├── globals.css               # Global styles + Tailwind @theme
-│   ├── loading.tsx               # Root loading state
-│   ├── error.tsx                 # Root error boundary
-│   ├── not-found.tsx             # 404 page
-│   ├── sitemap.ts                # Dynamic sitemap generation
-│   ├── robots.ts                 # Robots.txt rules
-│   ├── opengraph-image.tsx       # Default OG image (1200x630)
-│   ├── blog/                     # Blog listing & detail
-│   │   ├── page.tsx
-│   │   └── [slug]/
-│   │       ├── page.tsx          # Blog post detail (JSON-LD)
-│   │       └── opengraph-image.tsx
-│   ├── hizmetler/                # Services listing & detail
-│   │   ├── page.tsx
-│   │   └── [slug]/
-│   │       ├── page.tsx          # Service detail (JSON-LD)
-│   │       └── opengraph-image.tsx
-│   ├── urunler/                  # Products listing & detail
-│   │   ├── page.tsx
-│   │   └── [slug]/
-│   │       ├── page.tsx          # Product detail (JSON-LD)
-│   │       └── opengraph-image.tsx
-│   ├── galeri/page.tsx           # Before/after gallery
-│   ├── randevu/page.tsx          # Appointment booking (Server Component shell)
-│   └── iletisim/page.tsx         # Contact page (Server Component shell)
+├── app/                              # Next.js App Router
+│   ├── layout.tsx                    # Root layout (html, body, fonts, metadata)
+│   ├── globals.css                   # Global styles + Tailwind @theme
+│   ├── loading.tsx                   # Root loading state
+│   ├── error.tsx                     # Root error boundary
+│   ├── not-found.tsx                 # 404 page
+│   ├── sitemap.ts                    # Dynamic sitemap generation
+│   ├── robots.ts                     # Robots.txt rules
+│   ├── opengraph-image.tsx           # Default OG image (1200x630)
+│   │
+│   ├── (marketing)/                  # Public marketing site (no URL prefix)
+│   │   ├── layout.tsx                # Header + Footer + JSON-LD
+│   │   ├── page.tsx                  # Home page
+│   │   ├── hizmetler/                # Services listing & detail
+│   │   │   ├── page.tsx
+│   │   │   └── [slug]/
+│   │   │       ├── page.tsx          # Service detail (JSON-LD)
+│   │   │       └── opengraph-image.tsx
+│   │   ├── urunler/                  # Products listing & detail
+│   │   │   ├── page.tsx
+│   │   │   └── [slug]/
+│   │   │       ├── page.tsx          # Product detail (JSON-LD)
+│   │   │       └── opengraph-image.tsx
+│   │   ├── blog/                     # Blog listing & detail
+│   │   │   ├── page.tsx
+│   │   │   └── [slug]/
+│   │   │       ├── page.tsx          # Blog post detail (JSON-LD)
+│   │   │       └── opengraph-image.tsx
+│   │   ├── galeri/page.tsx           # Before/after gallery
+│   │   ├── randevu/page.tsx          # Appointment booking
+│   │   └── iletisim/page.tsx         # Contact page
+│   │
+│   ├── (auth)/                       # Auth pages (no URL prefix)
+│   │   ├── layout.tsx                # Minimal centered layout
+│   │   ├── giris/page.tsx            # /giris (login)
+│   │   ├── kayit/page.tsx            # /kayit (register)
+│   │   └── sifre-sifirla/page.tsx    # /sifre-sifirla (reset password)
+│   │
+│   └── admin/                        # Admin panel (URL prefix: /admin)
+│       ├── layout.tsx                # Sidebar + TopBar layout
+│       ├── page.tsx                  # Redirects to /admin/dashboard
+│       └── dashboard/page.tsx        # Admin dashboard
+│
 ├── components/
-│   ├── common/                   # Reusable UI components
-│   │   ├── Header.tsx            # Fixed navbar (client component)
-│   │   ├── Footer.tsx            # Site footer (server component)
-│   │   ├── Button.tsx            # Variant-based button
-│   │   ├── Input.tsx             # Form input with ref-as-prop
-│   │   ├── Select.tsx            # Dropdown select with ref-as-prop
-│   │   ├── Textarea.tsx          # Textarea with ref-as-prop
-│   │   ├── Card.tsx              # Card wrapper (glass/solid variants)
-│   │   ├── CategoryFilter.tsx   # Generic category filter (client component)
-│   │   ├── GalleryGrid.tsx      # Gallery grid with lightbox (client component)
-│   │   ├── Modal.tsx             # Animated modal dialog
-│   │   └── Loading.tsx           # Loading spinner
-│   ├── forms/                    # Extracted client form components
-│   │   ├── AppointmentForm.tsx   # Multi-step appointment form (client)
-│   │   └── ContactForm.tsx       # Contact form + info (client)
+│   ├── common/                       # Reusable UI components
+│   │   ├── Header.tsx                # Fixed navbar (client)
+│   │   ├── Footer.tsx                # Site footer (server)
+│   │   ├── Button.tsx, Card.tsx      # UI primitives
+│   │   ├── Input.tsx, Select.tsx     # Form inputs (ref-as-prop)
+│   │   ├── Textarea.tsx, Modal.tsx   # More UI components
+│   │   ├── CategoryFilter.tsx        # Category filter (client)
+│   │   ├── GalleryGrid.tsx           # Gallery grid + lightbox (client)
+│   │   └── Loading.tsx               # Loading spinner
+│   ├── admin/                        # Admin panel components
+│   │   ├── Sidebar.tsx               # Admin sidebar navigation (client)
+│   │   └── TopBar.tsx                # Admin top bar (client)
+│   ├── forms/                        # Extracted client form components
+│   │   ├── AppointmentForm.tsx       # Multi-step appointment form
+│   │   └── ContactForm.tsx           # Contact form + info
 │   ├── products/
-│   │   └── ProductDetail.tsx     # Product detail view (client)
+│   │   └── ProductDetail.tsx         # Product detail view (client)
 │   ├── seo/
-│   │   └── JsonLd.tsx            # JSON-LD script renderer
-│   └── home/                     # Homepage section components
-│       ├── Hero.tsx              # Hero section with CTA
-│       ├── FeaturedServices.tsx  # Top 3 services grid
-│       ├── Statistics.tsx        # Stats counter section
-│       └── Testimonials.tsx      # Customer reviews
+│   │   └── JsonLd.tsx                # JSON-LD script renderer
+│   └── home/                         # Homepage section components
+│       ├── Hero.tsx, Statistics.tsx
+│       ├── FeaturedServices.tsx
+│       └── Testimonials.tsx
+│
 ├── lib/
-│   ├── types/index.ts            # All TypeScript interfaces
-│   ├── store/useStore.ts         # Zustand store (menu state)
-│   ├── seo/
-│   │   └── jsonld.ts             # JSON-LD schema generators
-│   ├── data/                     # Static data files (TS constants)
-│   │   ├── services.ts           # Services + helper functions
-│   │   ├── products.ts           # Products + helper functions
-│   │   ├── blog.ts               # Blog posts + helper functions
-│   │   └── gallery.ts            # Gallery items + categories
+│   ├── types/index.ts                # All TypeScript interfaces
+│   ├── store/useStore.ts             # Zustand store (menu state)
+│   ├── seo/jsonld.ts                 # JSON-LD schema generators
+│   ├── data/                         # Static data files (TS constants)
+│   │   ├── services.ts, products.ts
+│   │   ├── blog.ts, gallery.ts
 │   ├── utils/
-│   │   ├── validation.ts         # Form validation functions
-│   │   └── helpers.ts            # Date/price/text formatting
-│   └── utils.ts                  # cn() utility (clsx + tailwind-merge)
-├── next.config.ts                # React Compiler, image optimization
-├── tailwind.config.ts            # Theme colors, fonts, animations
-├── tsconfig.json                 # TypeScript strict mode
-└── eslint.config.mjs             # ESLint (core-web-vitals + TypeScript)
+│   │   ├── validation.ts, helpers.ts
+│   └── utils.ts                      # cn() utility
+├── next.config.ts                    # React Compiler, image optimization
+├── tailwind.config.ts                # Tailwind (legacy, @theme in CSS)
+├── tsconfig.json                     # TypeScript strict mode
+└── eslint.config.mjs                 # ESLint config
 ```
 
 ---
@@ -132,19 +143,18 @@ export default function ServiceDetailPage() {
 }
 ```
 
-**Current state:** Almost all pages use `'use client'` unnecessarily. When refactoring, extract interactive parts into small client components and keep the page itself as a Server Component.
-
 Components that MUST be client components:
-- `Header.tsx` - uses `usePathname()`, `useStore()`, event handlers
+- `Header.tsx`, `Sidebar.tsx`, `TopBar.tsx` - navigation, `usePathname()`, event handlers
 - `Modal.tsx` - uses `useEffect`, event handlers
-- Form pages (`randevu`, `iletisim`) - use `useForm()`, `useState`
-- Pages with category filters (`hizmetler`, `urunler`, `blog`, `galeri`) - use `useState`
+- `AppointmentForm.tsx`, `ContactForm.tsx` - use `useForm()`, `useState`
+- `CategoryFilter.tsx`, `GalleryGrid.tsx` - use `useState`
+- `ProductDetail.tsx` - uses `useState` for quantity
 
-Components that should be Server Components:
-- `Footer.tsx` - already correct (no `'use client'`)
+Components that are Server Components:
+- All `page.tsx` files - receive params as props, export metadata
+- `Footer.tsx` - no client hooks
 - `Hero.tsx`, `FeaturedServices.tsx`, `Statistics.tsx`, `Testimonials.tsx` - no interactivity
-- `Card.tsx`, `Button.tsx`, `Loading.tsx` - no hooks or event handlers
-- Dynamic detail pages (`[slug]/page.tsx`) - should receive params as props
+- `Card.tsx`, `Button.tsx`, `Loading.tsx`, `JsonLd.tsx` - no hooks or event handlers
 
 ### 2. Dynamic Route Params (Next.js 16)
 
@@ -240,7 +250,25 @@ This project has a **hybrid setup** with both `tailwind.config.ts` (v3 style) an
 
 The `tailwind.config.ts` file is a **legacy artifact** from v3. In pure Tailwind CSS 4, all theme configuration goes in `@theme` blocks in CSS. When adding new theme values, prefer adding them to `globals.css` `@theme` block.
 
-### 7. Loading & Error Boundaries
+### 7. Route Groups (Faz 3)
+
+The project uses **route groups** to separate marketing, auth, and admin sections with different layouts:
+
+| Route Group | URL Prefix | Layout | Purpose |
+|-------------|-----------|--------|---------|
+| `(marketing)` | none | Header + Footer + JSON-LD | Public marketing site |
+| `(auth)` | none | Centered card | Login, register, password reset |
+| `admin/` | `/admin` | Sidebar + TopBar | Admin panel (placeholder) |
+
+**Rules:**
+- Marketing pages go in `app/(marketing)/` - URLs are unchanged (e.g., `/hizmetler`)
+- Auth pages go in `app/(auth)/` - URLs are `/giris`, `/kayit`, `/sifre-sifirla`
+- Admin pages go in `app/admin/` (not a route group, actual segment) - URLs are `/admin/dashboard`, etc.
+- Root `layout.tsx` only contains `<html>`, `<body>`, fonts, and global metadata
+- Root `not-found.tsx`, `error.tsx`, `loading.tsx` provide global fallbacks
+- Root `sitemap.ts`, `robots.ts`, `opengraph-image.tsx` are metadata routes (not page routes)
+
+### 8. Loading & Error Boundaries
 
 Add Next.js App Router conventions for loading and error states:
 
@@ -421,7 +449,7 @@ const onSubmit = (data: any) => { ... };
 
 ## Known Issues & Technical Debt
 
-### Fixed (Faz 1 + 1.5 + 2)
+### Fixed (Faz 1 + 1.5 + 2 + 3)
 - ~~All pages unnecessarily used `'use client'`~~ -> Refactored to Server Components
 - ~~Dynamic routes used `useParams()`~~ -> Async params prop (Next.js 16 pattern)
 - ~~No `generateStaticParams`~~ -> Added to all [slug] routes
@@ -440,6 +468,10 @@ const onSubmit = (data: any) => { ... };
 - ~~No OG images~~ -> Dynamic `opengraph-image.tsx` for root + all [slug] routes
 - ~~No canonical URLs~~ -> `alternates.canonical` on all pages + `metadataBase`
 - ~~randevu/iletisim/urunler were client pages~~ -> Extracted client components, pages are Server Components with metadata
+- ~~All pages in flat app/ directory~~ -> Route groups: (marketing), (auth), admin/
+- ~~Root layout had Header/Footer~~ -> Split into marketing layout, root is html/body only
+- ~~No auth pages~~ -> Placeholder giris/kayit/sifre-sifirla pages
+- ~~No admin panel~~ -> Admin layout with sidebar + dashboard placeholder
 
 ### Remaining Debt
 - Zustand is used only for mobile menu toggle - could be local state
