@@ -1,0 +1,507 @@
+# CLAUDE.md - Aesthetic Clinic Project Guide
+
+## Project Overview
+
+Turkish-language aesthetic (cosmetic) clinic marketing website built with Next.js 16, React 19, and Tailwind CSS 4. This is a **frontend-only UI project** with no backend, no database, and no API routes. All data is stored as static TypeScript constants.
+
+**Tech Stack:** Next.js 16.0.6 | React 19.2.0 | TypeScript 5 | Tailwind CSS 4 | Framer Motion 12 | Zustand 5 | React Hook Form 7 | Lucide React
+
+---
+
+## Quick Reference
+
+```bash
+npm run dev          # Development server (localhost:3000)
+npm run build        # Production build
+npm run start        # Start production server
+npm run lint         # ESLint check
+```
+
+**Path alias:** `@/*` maps to project root (`./`)
+
+---
+
+## Project Architecture
+
+```
+aesthetic-clinic/
+├── app/                          # Next.js App Router (pages & layouts)
+│   ├── layout.tsx                # Root layout (fonts, Header, Footer)
+│   ├── page.tsx                  # Home page (Server Component)
+│   ├── globals.css               # Global styles + Tailwind @theme
+│   ├── not-found.tsx             # 404 page
+│   ├── blog/                     # Blog listing & detail
+│   │   ├── page.tsx
+│   │   └── [slug]/page.tsx
+│   ├── hizmetler/                # Services listing & detail
+│   │   ├── page.tsx
+│   │   └── [slug]/page.tsx
+│   ├── urunler/                  # Products listing & detail
+│   │   ├── page.tsx
+│   │   └── [slug]/page.tsx
+│   ├── galeri/page.tsx           # Before/after gallery
+│   ├── randevu/page.tsx          # Appointment booking (multi-step form)
+│   └── iletisim/page.tsx         # Contact page with form & map
+├── components/
+│   ├── common/                   # Reusable UI components
+│   │   ├── Header.tsx            # Fixed navbar (client component)
+│   │   ├── Footer.tsx            # Site footer (server component)
+│   │   ├── Button.tsx            # Variant-based button
+│   │   ├── Input.tsx             # Form input with forwardRef
+│   │   ├── Select.tsx            # Dropdown select with forwardRef
+│   │   ├── Textarea.tsx          # Textarea with forwardRef
+│   │   ├── Card.tsx              # Card wrapper (glass/solid variants)
+│   │   ├── Modal.tsx             # Animated modal dialog
+│   │   └── Loading.tsx           # Loading spinner
+│   └── home/                     # Homepage section components
+│       ├── Hero.tsx              # Hero section with CTA
+│       ├── FeaturedServices.tsx  # Top 3 services grid
+│       ├── Statistics.tsx        # Stats counter section
+│       └── Testimonials.tsx      # Customer reviews
+├── lib/
+│   ├── types/index.ts            # All TypeScript interfaces
+│   ├── store/useStore.ts         # Zustand store (menu state)
+│   ├── data/                     # Static data files (TS constants)
+│   │   ├── services.ts           # Services + helper functions
+│   │   ├── products.ts           # Products + helper functions
+│   │   ├── blog.ts               # Blog posts + helper functions
+│   │   └── gallery.ts            # Gallery items + categories
+│   ├── utils/
+│   │   ├── validation.ts         # Form validation functions
+│   │   └── helpers.ts            # Date/price/text formatting
+│   └── utils.ts                  # cn() utility (clsx + tailwind-merge)
+├── next.config.ts                # React Compiler, image optimization
+├── tailwind.config.ts            # Theme colors, fonts, animations
+├── tsconfig.json                 # TypeScript strict mode
+└── eslint.config.mjs             # ESLint (core-web-vitals + TypeScript)
+```
+
+---
+
+## Critical Architecture Rules
+
+### 1. Server Components vs Client Components (Next.js 16 + React 19)
+
+**Default to Server Components.** Only add `'use client'` when the component genuinely needs browser APIs, hooks, or event handlers.
+
+```tsx
+// CORRECT: Server Component page (no 'use client')
+// app/hizmetler/[slug]/page.tsx
+import { getServiceBySlug } from '@/lib/data/services';
+import { notFound } from 'next/navigation';
+
+export default async function ServiceDetailPage({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}) {
+  const { slug } = await params;
+  const service = getServiceBySlug(slug);
+  if (!service) notFound();
+
+  return <ServiceDetailView service={service} />;
+}
+
+// WRONG: Using 'use client' just to read params
+'use client';
+import { useParams } from 'next/navigation';
+export default function ServiceDetailPage() {
+  const params = useParams(); // Unnecessary client-side
+}
+```
+
+**Current state:** Almost all pages use `'use client'` unnecessarily. When refactoring, extract interactive parts into small client components and keep the page itself as a Server Component.
+
+Components that MUST be client components:
+- `Header.tsx` - uses `usePathname()`, `useStore()`, event handlers
+- `Modal.tsx` - uses `useEffect`, event handlers
+- Form pages (`randevu`, `iletisim`) - use `useForm()`, `useState`
+- Pages with category filters (`hizmetler`, `urunler`, `blog`, `galeri`) - use `useState`
+
+Components that should be Server Components:
+- `Footer.tsx` - already correct (no `'use client'`)
+- `Hero.tsx`, `FeaturedServices.tsx`, `Statistics.tsx`, `Testimonials.tsx` - no interactivity
+- `Card.tsx`, `Button.tsx`, `Loading.tsx` - no hooks or event handlers
+- Dynamic detail pages (`[slug]/page.tsx`) - should receive params as props
+
+### 2. Dynamic Route Params (Next.js 16)
+
+In Next.js 16, dynamic route `params` are **asynchronous** and received as a Promise prop:
+
+```tsx
+// CORRECT: Next.js 16 pattern
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}) {
+  const { slug } = await params;
+  // ...
+}
+
+// WRONG: Old pattern (still works with 'use client' but loses SSR benefits)
+'use client';
+import { useParams } from 'next/navigation';
+export default function Page() {
+  const params = useParams();
+}
+```
+
+### 3. Static Generation with generateStaticParams
+
+All dynamic routes (`[slug]`) with static data MUST use `generateStaticParams` for build-time generation:
+
+```tsx
+// app/hizmetler/[slug]/page.tsx
+import { services } from '@/lib/data/services';
+
+export function generateStaticParams() {
+  return services.map((service) => ({ slug: service.slug }));
+}
+
+export function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
+  // Return page-specific metadata for SEO
+}
+```
+
+### 4. Per-Page Metadata (SEO)
+
+Every page MUST export its own `metadata` or `generateMetadata`. Currently only `app/layout.tsx` has metadata.
+
+```tsx
+// app/hizmetler/page.tsx
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'Hizmetlerimiz | Aesthetic Clinic',
+  description: 'Botoks, dolgu, lazer epilasyon...',
+};
+```
+
+### 5. React 19: No More forwardRef
+
+React 19 supports `ref` as a regular prop. The React Compiler (enabled in this project) handles this automatically:
+
+```tsx
+// CORRECT: React 19 pattern
+interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
+  ref?: React.Ref<HTMLInputElement>;
+  label?: string;
+  error?: string;
+}
+
+export default function Input({ ref, label, error, ...props }: InputProps) {
+  return <input ref={ref} {...props} />;
+}
+
+// OUTDATED: forwardRef pattern (still works but unnecessary)
+const Input = forwardRef<HTMLInputElement, InputProps>((props, ref) => {
+  return <input ref={ref} {...props} />;
+});
+Input.displayName = 'Input';
+```
+
+### 6. Tailwind CSS 4 Configuration
+
+This project has a **hybrid setup** with both `tailwind.config.ts` (v3 style) and `@theme` in `globals.css` (v4 style). In Tailwind CSS 4, theming is done entirely in CSS:
+
+```css
+/* globals.css - This is the v4 way (already partially done) */
+@import "tailwindcss";
+
+@theme {
+  --color-primary-500: #e03aff;
+  --font-display: 'Playfair Display', Georgia, serif;
+  /* ... */
+}
+```
+
+The `tailwind.config.ts` file is a **legacy artifact** from v3. In pure Tailwind CSS 4, all theme configuration goes in `@theme` blocks in CSS. When adding new theme values, prefer adding them to `globals.css` `@theme` block.
+
+### 7. Loading & Error Boundaries
+
+Add Next.js App Router conventions for loading and error states:
+
+```
+app/
+├── loading.tsx          # Root loading state
+├── error.tsx            # Root error boundary ('use client' required)
+├── hizmetler/
+│   ├── loading.tsx      # Route-specific loading
+│   └── error.tsx        # Route-specific error
+```
+
+---
+
+## Design System & Styling Conventions
+
+### Color Palette
+
+| Token | Usage | Hex |
+|-------|-------|-----|
+| `primary-*` | Brand color (purple) | `#e03aff` (500) |
+| `secondary-*` | Accent teal | `#14b8a6` (500) |
+| `accent-*` | Orange highlights | `#f97316` (500) |
+
+### Typography
+
+- **Body text:** Inter (sans) via `font-sans` / `var(--font-inter)`
+- **Headings:** Playfair Display (serif) via `font-display` / `var(--font-playfair)`
+- All `h1-h6` tags automatically use `font-display` via base layer
+
+### CSS Utility Classes (globals.css)
+
+| Class | Purpose |
+|-------|---------|
+| `.glass-card` | Glassmorphism card (white/70, blur, border) |
+| `.glass-card-dark` | Dark glassmorphism card |
+| `.btn-primary` | Gradient purple button |
+| `.btn-secondary` | Gradient teal button |
+| `.btn-outline` | Outlined purple button |
+| `.section-container` | Max-w-7xl centered container with padding |
+| `.gradient-text` | Gradient text effect (purple to teal) |
+| `.card-hover` | Hover lift + shadow effect |
+| `.image-overlay` | Image with gradient overlay on hover |
+| `.shimmer` | Loading shimmer animation |
+
+### Component Patterns
+
+- Use `cn()` from `@/lib/utils` for conditional class merging
+- Prefer the `Button` component over raw `<button>` with `.btn-*` classes
+- Use `Card` component with `glass` and `hover` props
+- Responsive: mobile-first with `sm:`, `md:`, `lg:` breakpoints
+- Grid patterns: `grid-cols-1 md:grid-cols-2 lg:grid-cols-3`
+
+### Framer Motion Conventions
+
+```tsx
+// Page entrance animation
+<motion.div
+  initial={{ opacity: 0, y: 20 }}
+  animate={{ opacity: 1, y: 0 }}
+  transition={{ duration: 0.6 }}
+>
+
+// Scroll-triggered animation
+<motion.div
+  initial={{ opacity: 0, y: 20 }}
+  whileInView={{ opacity: 1, y: 0 }}
+  viewport={{ once: true }}
+  transition={{ duration: 0.5, delay: index * 0.1 }}
+>
+
+// AnimatePresence for mount/unmount
+<AnimatePresence>
+  {isVisible && <motion.div exit={{ opacity: 0 }} />}
+</AnimatePresence>
+```
+
+---
+
+## Data Layer
+
+All data is **static TypeScript** in `lib/data/`. No database, no API.
+
+### Data Files
+
+| File | Export | Helpers |
+|------|--------|---------|
+| `services.ts` | `services`, `serviceCategories` | `getServiceBySlug()`, `getServicesByCategory()` |
+| `products.ts` | `products`, `productCategories` | `getProductBySlug()` |
+| `blog.ts` | `blogPosts`, `blogCategories` | `getBlogPostBySlug()` |
+| `gallery.ts` | `galleryItems`, `galleryCategories` | - |
+
+### Type Definitions (`lib/types/index.ts`)
+
+All interfaces: `Service`, `Product`, `GalleryItem`, `BlogPost`, `Testimonial`, `AppointmentFormData`, `ContactFormData`, `Statistics`
+
+When adding new data entities:
+1. Define the interface in `lib/types/index.ts`
+2. Create data file in `lib/data/`
+3. Export categories array with `{ value, label }` pattern
+4. Add `getBySlug()` helper function
+5. Each item must have `id` and `slug` fields
+
+---
+
+## Form Handling
+
+Forms use **React Hook Form** with inline validation:
+
+```tsx
+const { register, handleSubmit, formState: { errors } } = useForm<ContactFormData>();
+
+<Input
+  label="E-posta"
+  {...register('email', {
+    required: 'Bu alan zorunludur',
+    pattern: {
+      value: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i,
+      message: 'Gecersiz e-posta adresi'
+    }
+  })}
+  error={errors.email?.message as string}
+/>
+```
+
+**Important:** Always type form data properly. Avoid `any` in `onSubmit`:
+
+```tsx
+// CORRECT
+const onSubmit = (data: ContactFormData) => { ... };
+
+// WRONG (current state in some files)
+const onSubmit = (data: any) => { ... };
+```
+
+---
+
+## Known Issues & Technical Debt
+
+### Bugs
+- `app/galeri/page.tsx:90` references `item.title` which does not exist on `GalleryItem` type (should be `item.description` or `item.service`)
+- `app/urunler/page.tsx:100` references `product.shortDescription` which does not exist on `Product` type (should be `product.description`)
+- Footer address (Nisantasi) differs from Contact page address (Bagdat Caddesi) - should be consistent
+
+### Architecture Debt
+- All pages unnecessarily use `'use client'` - should refactor to Server Components
+- Dynamic routes use `useParams()` instead of receiving params as async props
+- No `generateStaticParams` on any dynamic route
+- No per-page metadata exports (bad for SEO)
+- No `loading.tsx` or `error.tsx` boundary files
+- `forwardRef` used in Input, Select, Textarea - unnecessary with React 19
+- `tailwind.config.ts` is redundant with Tailwind v4 `@theme` in globals.css
+- Form `onSubmit` handlers use `any` type
+
+### Unused Dependencies
+- `@tanstack/react-query` - installed but never imported anywhere
+- `nodemailer` - installed but no API routes or server-side email sending
+- Zustand is used only for mobile menu toggle - could be local state
+
+### Missing Features
+- No actual images (all placeholders)
+- Forms only log to console (no backend integration)
+- No API routes
+- No authentication
+- No `.env` configuration
+- Google Maps embed uses placeholder coordinates
+
+---
+
+## Coding Standards
+
+### TypeScript
+- Strict mode enabled
+- Always type function parameters and return values
+- Use interface over type for object shapes
+- Export interfaces from `lib/types/index.ts`
+- Never use `any` - use proper types or `unknown`
+
+### Naming Conventions
+- **Files:** PascalCase for components (`Header.tsx`), camelCase for utilities (`helpers.ts`)
+- **Components:** PascalCase (`FeaturedServices`)
+- **Functions:** camelCase (`getServiceBySlug`)
+- **Constants:** camelCase for arrays/objects (`services`, `blogCategories`)
+- **Interfaces:** PascalCase (`Service`, `BlogPost`)
+- **CSS classes:** kebab-case (`.glass-card`, `.btn-primary`)
+- **Routes:** Turkish lowercase (`hizmetler`, `randevu`, `iletisim`)
+
+### Import Order
+1. React / Next.js core
+2. Third-party libraries (framer-motion, lucide-react, etc.)
+3. Internal components (`@/components/...`)
+4. Internal data/utilities (`@/lib/...`)
+
+### Component Structure Pattern
+```tsx
+// 1. Directive (if needed)
+'use client';
+
+// 2. Imports
+import { ... } from 'react';
+import { ... } from 'next/...';
+import { ... } from 'third-party';
+import { ... } from '@/components/...';
+import { ... } from '@/lib/...';
+
+// 3. Types (if local)
+interface Props { ... }
+
+// 4. Constants (if local)
+const items = [...];
+
+// 5. Component
+export default function ComponentName({ props }: Props) {
+  // hooks
+  // derived state
+  // handlers
+  // return JSX
+}
+```
+
+### Page Structure Pattern
+Every page follows a consistent section pattern:
+```tsx
+<div className="min-h-screen pb-20">
+  {/* Hero Section */}
+  <section className="py-20 bg-primary-50">
+    <div className="section-container text-center">
+      <h1>...</h1>
+      <p>...</p>
+    </div>
+  </section>
+
+  {/* Filter Section (if applicable) */}
+  <section className="py-8 border-b border-gray-100 bg-white">
+    {/* Category filter buttons */}
+  </section>
+
+  {/* Content Grid */}
+  <section className="section-container">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+      {/* Items */}
+    </div>
+  </section>
+</div>
+```
+
+---
+
+## Configuration Details
+
+### next.config.ts
+- `reactCompiler: true` - React Compiler (babel-plugin-react-compiler) enabled
+- Image formats: AVIF, WebP
+- Compression enabled
+- `poweredByHeader: false` (security)
+
+### TypeScript
+- Target: ES2017
+- Strict mode: enabled
+- Module resolution: bundler
+- Path alias: `@/*` -> `./*`
+
+### ESLint
+- Extends: `eslint-config-next/core-web-vitals`, `eslint-config-next/typescript`
+- Ignores: `.next/`, `out/`, `build/`
+
+---
+
+## Language & Content
+
+- All user-facing content is in **Turkish**
+- Date formatting uses Turkish locale (`tr-TR`)
+- Currency: Turkish Lira (TL) - formatted as string, not numeric
+- URL slugs use Turkish-compatible ASCII (`botoks`, `dudak-dolgusu`, `lazer-epilasyon`)
+
+---
+
+## Development Workflow
+
+1. **Before modifying a file:** Read it first to understand current patterns
+2. **Adding a new page:** Create directory in `app/`, add `page.tsx`, export metadata
+3. **Adding a component:** Place in `components/common/` (reusable) or `components/{section}/` (section-specific)
+4. **Adding new data:** Define type in `lib/types/`, create data file in `lib/data/`
+5. **Styling:** Use Tailwind utilities directly, add reusable patterns to `globals.css`
+6. **Lint check:** Run `npm run lint` before committing
+7. **Build check:** Run `npm run build` to verify no TypeScript or build errors
