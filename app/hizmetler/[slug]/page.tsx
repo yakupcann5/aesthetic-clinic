@@ -2,6 +2,8 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { Clock, Check, Calendar, Info, ShieldCheck } from 'lucide-react';
 import { getServiceBySlug, services } from '@/lib/data/services';
+import JsonLd from '@/components/seo/JsonLd';
+import { serviceJsonLd, breadcrumbJsonLd } from '@/lib/seo/jsonld';
 import type { Metadata } from 'next';
 
 type Props = {
@@ -41,6 +43,13 @@ export default async function ServiceDetailPage({ params }: Props) {
 
   return (
     <div className="min-h-screen pb-20">
+      <JsonLd data={serviceJsonLd(service)} />
+      <JsonLd data={breadcrumbJsonLd([
+        { name: 'Ana Sayfa', url: '/' },
+        { name: 'Hizmetler', url: '/hizmetler' },
+        { name: service.title, url: `/hizmetler/${service.slug}` },
+      ])} />
+
       {/* Hero Section */}
       <section className="relative h-[50vh] md:h-[60vh] min-h-[350px] md:min-h-[500px] flex items-center justify-center overflow-hidden bg-gray-900">
         <div className="absolute inset-0 bg-gradient-to-t from-gray-900 via-gray-900/50 to-transparent z-10" />

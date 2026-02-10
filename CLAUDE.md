@@ -26,37 +26,53 @@ npm run lint         # ESLint check
 ```
 aesthetic-clinic/
 ├── app/                          # Next.js App Router (pages & layouts)
-│   ├── layout.tsx                # Root layout (fonts, Header, Footer)
+│   ├── layout.tsx                # Root layout (fonts, Header, Footer, JSON-LD)
 │   ├── page.tsx                  # Home page (Server Component)
 │   ├── globals.css               # Global styles + Tailwind @theme
 │   ├── loading.tsx               # Root loading state
 │   ├── error.tsx                 # Root error boundary
 │   ├── not-found.tsx             # 404 page
+│   ├── sitemap.ts                # Dynamic sitemap generation
+│   ├── robots.ts                 # Robots.txt rules
+│   ├── opengraph-image.tsx       # Default OG image (1200x630)
 │   ├── blog/                     # Blog listing & detail
 │   │   ├── page.tsx
-│   │   └── [slug]/page.tsx
+│   │   └── [slug]/
+│   │       ├── page.tsx          # Blog post detail (JSON-LD)
+│   │       └── opengraph-image.tsx
 │   ├── hizmetler/                # Services listing & detail
 │   │   ├── page.tsx
-│   │   └── [slug]/page.tsx
+│   │   └── [slug]/
+│   │       ├── page.tsx          # Service detail (JSON-LD)
+│   │       └── opengraph-image.tsx
 │   ├── urunler/                  # Products listing & detail
 │   │   ├── page.tsx
-│   │   └── [slug]/page.tsx
+│   │   └── [slug]/
+│   │       ├── page.tsx          # Product detail (JSON-LD)
+│   │       └── opengraph-image.tsx
 │   ├── galeri/page.tsx           # Before/after gallery
-│   ├── randevu/page.tsx          # Appointment booking (multi-step form)
-│   └── iletisim/page.tsx         # Contact page with form & map
+│   ├── randevu/page.tsx          # Appointment booking (Server Component shell)
+│   └── iletisim/page.tsx         # Contact page (Server Component shell)
 ├── components/
 │   ├── common/                   # Reusable UI components
 │   │   ├── Header.tsx            # Fixed navbar (client component)
 │   │   ├── Footer.tsx            # Site footer (server component)
 │   │   ├── Button.tsx            # Variant-based button
-│   │   ├── Input.tsx             # Form input with forwardRef
-│   │   ├── Select.tsx            # Dropdown select with forwardRef
-│   │   ├── Textarea.tsx          # Textarea with forwardRef
+│   │   ├── Input.tsx             # Form input with ref-as-prop
+│   │   ├── Select.tsx            # Dropdown select with ref-as-prop
+│   │   ├── Textarea.tsx          # Textarea with ref-as-prop
 │   │   ├── Card.tsx              # Card wrapper (glass/solid variants)
 │   │   ├── CategoryFilter.tsx   # Generic category filter (client component)
 │   │   ├── GalleryGrid.tsx      # Gallery grid with lightbox (client component)
 │   │   ├── Modal.tsx             # Animated modal dialog
 │   │   └── Loading.tsx           # Loading spinner
+│   ├── forms/                    # Extracted client form components
+│   │   ├── AppointmentForm.tsx   # Multi-step appointment form (client)
+│   │   └── ContactForm.tsx       # Contact form + info (client)
+│   ├── products/
+│   │   └── ProductDetail.tsx     # Product detail view (client)
+│   ├── seo/
+│   │   └── JsonLd.tsx            # JSON-LD script renderer
 │   └── home/                     # Homepage section components
 │       ├── Hero.tsx              # Hero section with CTA
 │       ├── FeaturedServices.tsx  # Top 3 services grid
@@ -65,6 +81,8 @@ aesthetic-clinic/
 ├── lib/
 │   ├── types/index.ts            # All TypeScript interfaces
 │   ├── store/useStore.ts         # Zustand store (menu state)
+│   ├── seo/
+│   │   └── jsonld.ts             # JSON-LD schema generators
 │   ├── data/                     # Static data files (TS constants)
 │   │   ├── services.ts           # Services + helper functions
 │   │   ├── products.ts           # Products + helper functions
@@ -403,7 +421,7 @@ const onSubmit = (data: any) => { ... };
 
 ## Known Issues & Technical Debt
 
-### Fixed (Faz 1 + 1.5)
+### Fixed (Faz 1 + 1.5 + 2)
 - ~~All pages unnecessarily used `'use client'`~~ -> Refactored to Server Components
 - ~~Dynamic routes used `useParams()`~~ -> Async params prop (Next.js 16 pattern)
 - ~~No `generateStaticParams`~~ -> Added to all [slug] routes
@@ -417,6 +435,11 @@ const onSubmit = (data: any) => { ... };
 - ~~Products `shortDescription` bug~~ -> Uses `product.description`
 - ~~Address inconsistency~~ -> Unified to Bagdat Caddesi
 - ~~Mobile responsiveness issues~~ -> All pages mobile-optimized
+- ~~No sitemap or robots.txt~~ -> Dynamic `sitemap.ts` + `robots.ts`
+- ~~No structured data~~ -> JSON-LD (Organization, WebSite, MedicalProcedure, BlogPosting, Product, BreadcrumbList)
+- ~~No OG images~~ -> Dynamic `opengraph-image.tsx` for root + all [slug] routes
+- ~~No canonical URLs~~ -> `alternates.canonical` on all pages + `metadataBase`
+- ~~randevu/iletisim/urunler were client pages~~ -> Extracted client components, pages are Server Components with metadata
 
 ### Remaining Debt
 - Zustand is used only for mobile menu toggle - could be local state
@@ -508,6 +531,51 @@ Every page follows a consistent mobile-first section pattern:
   </section>
 </div>
 ```
+
+---
+
+## SEO Infrastructure (Faz 2)
+
+### Metadata Strategy
+
+Root layout (`app/layout.tsx`) defines site-wide defaults with title template:
+```tsx
+metadataBase: new URL(siteUrl),
+title: { default: '...', template: '%s | Aesthetic Clinic' },
+```
+
+- Static pages export `metadata` object
+- Dynamic `[slug]` pages export `generateMetadata()` that awaits params
+- All pages have `alternates.canonical` for canonical URLs
+- Environment variable: `NEXT_PUBLIC_SITE_URL` (defaults to `https://aestheticclinic.com`)
+
+### JSON-LD Structured Data
+
+Schema generators in `lib/seo/jsonld.ts`, rendered via `components/seo/JsonLd.tsx`:
+
+| Function | Schema Type | Used On |
+|----------|-------------|---------|
+| `organizationJsonLd()` | MedicalBusiness | Root layout |
+| `webSiteJsonLd()` | WebSite + SearchAction | Root layout |
+| `serviceJsonLd(service)` | MedicalProcedure | hizmetler/[slug] |
+| `blogPostJsonLd(post)` | BlogPosting | blog/[slug] |
+| `productJsonLd(product)` | Product | urunler/[slug] |
+| `breadcrumbJsonLd(items)` | BreadcrumbList | All [slug] detail pages |
+
+### Dynamic OG Images
+
+Each `opengraph-image.tsx` uses `ImageResponse` from `next/og` (edge runtime):
+- `app/opengraph-image.tsx` - Site default (purple gradient, clinic info)
+- `app/hizmetler/[slug]/opengraph-image.tsx` - Service name + category
+- `app/blog/[slug]/opengraph-image.tsx` - Post title + author + date
+- `app/urunler/[slug]/opengraph-image.tsx` - Product name + brand + price
+
+All generate 1200x630 PNG images with consistent brand styling.
+
+### Sitemap & Robots
+
+- `app/sitemap.ts` - Generates all static + dynamic routes from data files
+- `app/robots.ts` - Allows `/`, disallows `/api/`, `/dashboard/`, `/admin/`
 
 ---
 

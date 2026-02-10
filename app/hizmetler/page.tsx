@@ -6,8 +6,9 @@ import type { Metadata } from 'next';
 import type { Service } from '@/lib/types';
 
 export const metadata: Metadata = {
-  title: 'Hizmetlerimiz | Aesthetic Clinic',
+  title: 'Hizmetlerimiz',
   description: 'Botoks, dolgu, lazer epilasyon, PRP ve daha fazlası. Modern teknoloji ve uzman kadromuzla sunduğumuz estetik çözümler.',
+  alternates: { canonical: '/hizmetler' },
 };
 
 function ServiceCard({ service }: { service: Service }) {

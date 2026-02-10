@@ -6,8 +6,9 @@ import type { Metadata } from 'next';
 import type { BlogPost } from '@/lib/types';
 
 export const metadata: Metadata = {
-  title: 'Blog & Makaleler | Aesthetic Clinic',
+  title: 'Blog & Makaleler',
   description: 'Güzellik, estetik ve sağlık dünyasından en güncel bilgiler, ipuçları ve uzman görüşleri.',
+  alternates: { canonical: '/blog' },
 };
 
 function BlogCard({ post }: { post: BlogPost }) {

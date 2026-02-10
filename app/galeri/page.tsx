@@ -3,8 +3,9 @@ import GalleryGrid from '@/components/common/GalleryGrid';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Öncesi & Sonrası Galeri | Aesthetic Clinic',
+  title: 'Öncesi & Sonrası Galeri',
   description: 'Hastalarımızın değişim hikayelerine tanık olun. Gerçek sonuçlar, gerçek mutluluklar.',
+  alternates: { canonical: '/galeri' },
 };
 
 export default function GalleryPage() {

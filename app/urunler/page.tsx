@@ -6,8 +6,9 @@ import type { Metadata } from 'next';
 import type { Product } from '@/lib/types';
 
 export const metadata: Metadata = {
-  title: 'Dermo-Kozmetik Ürünler | Aesthetic Clinic',
+  title: 'Dermo-Kozmetik Ürünler',
   description: 'Uzmanlarımızın önerdiği, klinik onaylı profesyonel bakım ürünleri ile güzelliğinizi evde de koruyun.',
+  alternates: { canonical: '/urunler' },
 };
 
 function ProductCard({ product }: { product: Product }) {

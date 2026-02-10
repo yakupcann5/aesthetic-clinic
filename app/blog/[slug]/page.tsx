@@ -2,6 +2,8 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { Calendar, Clock, User, ArrowLeft, Share2, Facebook, Twitter, Linkedin } from 'lucide-react';
 import { getBlogPostBySlug, blogPosts } from '@/lib/data/blog';
+import JsonLd from '@/components/seo/JsonLd';
+import { blogPostJsonLd, breadcrumbJsonLd } from '@/lib/seo/jsonld';
 import type { Metadata } from 'next';
 
 type Props = {
@@ -43,6 +45,13 @@ export default async function BlogPostPage({ params }: Props) {
 
   return (
     <div className="min-h-screen pb-20">
+      <JsonLd data={blogPostJsonLd(post)} />
+      <JsonLd data={breadcrumbJsonLd([
+        { name: 'Ana Sayfa', url: '/' },
+        { name: 'Blog', url: '/blog' },
+        { name: post.title, url: `/blog/${post.slug}` },
+      ])} />
+
       {/* Header Image */}
       <div className="relative h-[45vh] md:h-[50vh] min-h-[320px] md:min-h-[400px] bg-gray-900">
         <div className="absolute inset-0 bg-gray-800" />
