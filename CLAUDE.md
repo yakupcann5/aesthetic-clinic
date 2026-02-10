@@ -152,7 +152,7 @@ aesthetic-clinic/
 │   ├── schema.prisma                 # Database schema (PostgreSQL)
 │   └── seed.ts                       # Seed script (static data + admin user → DB)
 ├── prisma.config.ts                  # Prisma 7 config (datasource URL)
-├── middleware.ts                      # Auth.js middleware (admin route protection)
+├── proxy.ts                           # Auth.js proxy (admin route protection, Next.js 16)
 │
 ├── next.config.ts                    # React Compiler, image optimization
 ├── tailwind.config.ts                # Tailwind (legacy, @theme in CSS)
@@ -332,9 +332,9 @@ Auth.js v5 (next-auth@beta) with Credentials provider and JWT sessions.
 - Custom callbacks: `jwt` (adds `id`, `role`), `session` (exposes `id`, `role`), `authorized` (protects `/admin/*`)
 
 **Route Protection:**
-- `middleware.ts` exports Auth.js middleware, matches `/admin/:path*`
+- `proxy.ts` exports Auth.js proxy function (Next.js 16 convention, replaces middleware.ts), matches `/admin/:path*`
 - `app/admin/layout.tsx` does server-side `auth()` check, redirects to `/giris`
-- Double protection: middleware (edge) + layout (server-side)
+- Double protection: proxy (Node.js runtime) + layout (server-side)
 
 **Session Access:**
 - Server components: `const session = await auth();` from `@/lib/auth`

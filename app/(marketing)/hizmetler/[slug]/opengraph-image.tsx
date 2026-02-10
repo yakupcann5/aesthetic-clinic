@@ -1,7 +1,6 @@
 import { ImageResponse } from 'next/og';
 import { getServiceBySlug, services } from '@/lib/data/services';
 
-export const runtime = 'edge';
 export const alt = 'Aesthetic Clinic Hizmet';
 export const size = { width: 1200, height: 630 };
 export const contentType = 'image/png';
