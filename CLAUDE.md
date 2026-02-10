@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-Turkish-language aesthetic (cosmetic) clinic marketing website built with Next.js 16, React 19, and Tailwind CSS 4. This is a **frontend-only UI project** with no backend, no database, and no API routes. All data is stored as static TypeScript constants.
+Turkish-language aesthetic (cosmetic) clinic website built with Next.js 16, React 19, and Tailwind CSS 4. Backend infrastructure with PostgreSQL (via Prisma ORM) and REST API routes. Marketing pages still use static data; transition to database is ready.
 
-**Tech Stack:** Next.js 16.0.6 | React 19.2.0 | TypeScript 5 | Tailwind CSS 4 | Framer Motion 12 | Zustand 5 | React Hook Form 7 | Lucide React
+**Tech Stack:** Next.js 16.0.6 | React 19.2.0 | TypeScript 5 | Tailwind CSS 4 | Framer Motion 12 | Prisma 7 | Zod 4 | Zustand 5 | React Hook Form 7 | Lucide React
 
 ---
 
@@ -15,6 +15,11 @@ npm run dev          # Development server (localhost:3000)
 npm run build        # Production build
 npm run start        # Start production server
 npm run lint         # ESLint check
+npm run db:generate  # Generate Prisma client
+npm run db:migrate   # Run database migrations
+npm run db:push      # Push schema to database (no migration)
+npm run db:seed      # Seed database with static data
+npm run db:studio    # Open Prisma Studio GUI
 ```
 
 **Path alias:** `@/*` maps to project root (`./`)
@@ -63,10 +68,18 @@ aesthetic-clinic/
 │   │   ├── kayit/page.tsx            # /kayit (register)
 │   │   └── sifre-sifirla/page.tsx    # /sifre-sifirla (reset password)
 │   │
-│   └── admin/                        # Admin panel (URL prefix: /admin)
-│       ├── layout.tsx                # Sidebar + TopBar layout
-│       ├── page.tsx                  # Redirects to /admin/dashboard
-│       └── dashboard/page.tsx        # Admin dashboard
+│   ├── admin/                        # Admin panel (URL prefix: /admin)
+│   │   ├── layout.tsx                # Sidebar + TopBar layout
+│   │   ├── page.tsx                  # Redirects to /admin/dashboard
+│   │   └── dashboard/page.tsx        # Admin dashboard
+│   │
+│   └── api/                          # REST API routes
+│       ├── services/                 # GET (list), POST (create)
+│       │   └── [id]/                 # GET, PUT, DELETE
+│       ├── products/, blog/, gallery/ # Same CRUD pattern
+│       ├── appointments/             # CRUD + status updates
+│       ├── contact/                  # GET (list), POST (submit)
+│       └── settings/                 # GET, PUT (site settings)
 │
 ├── components/
 │   ├── common/                       # Reusable UI components
@@ -95,14 +108,26 @@ aesthetic-clinic/
 │
 ├── lib/
 │   ├── types/index.ts                # All TypeScript interfaces
+│   ├── db.ts                         # Prisma client singleton
+│   ├── api-utils.ts                  # API response helpers
 │   ├── store/useStore.ts             # Zustand store (menu state)
 │   ├── seo/jsonld.ts                 # JSON-LD schema generators
-│   ├── data/                         # Static data files (TS constants)
+│   ├── data/                         # Static data (used for seed + SSG)
 │   │   ├── services.ts, products.ts
 │   │   ├── blog.ts, gallery.ts
+│   ├── validations/                  # Zod schemas for API validation
+│   │   ├── service.ts, product.ts
+│   │   ├── blog.ts, gallery.ts
+│   │   ├── appointment.ts, contact.ts
+│   │   ├── auth.ts, settings.ts
 │   ├── utils/
 │   │   ├── validation.ts, helpers.ts
 │   └── utils.ts                      # cn() utility
+│
+├── prisma/
+│   ├── schema.prisma                 # Database schema (PostgreSQL)
+│   └── seed.ts                       # Seed script (static data → DB)
+│
 ├── next.config.ts                    # React Compiler, image optimization
 ├── tailwind.config.ts                # Tailwind (legacy, @theme in CSS)
 ├── tsconfig.json                     # TypeScript strict mode
@@ -391,7 +416,7 @@ Every page and component MUST be mobile-responsive. Design mobile-first, then sc
 
 ## Data Layer
 
-All data is **static TypeScript** in `lib/data/`. No database, no API.
+Marketing pages still use **static TypeScript** in `lib/data/` for build-time generation (`generateStaticParams`). API routes use **Prisma** for database access.
 
 ### Data Files
 
@@ -412,6 +437,52 @@ When adding new data entities:
 3. Export categories array with `{ value, label }` pattern
 4. Add `getBySlug()` helper function
 5. Each item must have `id` and `slug` fields
+
+---
+
+## Backend Infrastructure (Faz 4)
+
+### Database (Prisma + PostgreSQL)
+
+- **Schema:** `prisma/schema.prisma` - 8 models (User, Service, Product, BlogPost, GalleryItem, Appointment, ContactMessage, SiteSettings)
+- **Client:** `lib/db.ts` - Singleton Prisma client (prevents hot-reload connection leaks)
+- **Seed:** `prisma/seed.ts` - Populates DB from existing `lib/data/*.ts` static data
+- **Env:** `DATABASE_URL` required in `.env` (see `.env.example`)
+
+### API Routes
+
+All routes return `{ success: boolean, data?: T, error?: string }` via `lib/api-utils.ts`:
+
+| Route | Methods | Validation Schema |
+|-------|---------|-------------------|
+| `/api/services` | GET, POST | `createServiceSchema` |
+| `/api/services/[id]` | GET, PUT, DELETE | `updateServiceSchema` |
+| `/api/products` | GET, POST | `createProductSchema` |
+| `/api/products/[id]` | GET, PUT, DELETE | `updateProductSchema` |
+| `/api/blog` | GET, POST | `createBlogPostSchema` |
+| `/api/blog/[id]` | GET, PUT, DELETE | `updateBlogPostSchema` |
+| `/api/gallery` | GET, POST | `createGalleryItemSchema` |
+| `/api/gallery/[id]` | GET, PUT, DELETE | `updateGalleryItemSchema` |
+| `/api/appointments` | GET, POST | `createAppointmentSchema` |
+| `/api/appointments/[id]` | GET, PUT, DELETE | `updateAppointmentStatusSchema` |
+| `/api/contact` | GET, POST | `createContactMessageSchema` |
+| `/api/settings` | GET, PUT | `updateSiteSettingsSchema` |
+
+### Zod Validation
+
+All schemas in `lib/validations/`. Each entity has `create*Schema` + `update*Schema` (partial). API routes validate input with `schema.parse(body)`, returning 400 with Turkish error messages on failure.
+
+### Database Setup
+
+```bash
+# 1. Set DATABASE_URL in .env
+# 2. Generate Prisma client
+npm run db:generate
+# 3. Push schema to database
+npm run db:push
+# 4. Seed with static data
+npm run db:seed
+```
 
 ---
 
@@ -449,7 +520,7 @@ const onSubmit = (data: any) => { ... };
 
 ## Known Issues & Technical Debt
 
-### Fixed (Faz 1 + 1.5 + 2 + 3)
+### Fixed (Faz 1 + 1.5 + 2 + 3 + 4)
 - ~~All pages unnecessarily used `'use client'`~~ -> Refactored to Server Components
 - ~~Dynamic routes used `useParams()`~~ -> Async params prop (Next.js 16 pattern)
 - ~~No `generateStaticParams`~~ -> Added to all [slug] routes
@@ -472,6 +543,9 @@ const onSubmit = (data: any) => { ... };
 - ~~Root layout had Header/Footer~~ -> Split into marketing layout, root is html/body only
 - ~~No auth pages~~ -> Placeholder giris/kayit/sifre-sifirla pages
 - ~~No admin panel~~ -> Admin layout with sidebar + dashboard placeholder
+- ~~No backend/database~~ -> Prisma + PostgreSQL schema, API routes, Zod validation
+- ~~No API routes~~ -> Full CRUD for services, products, blog, gallery, appointments, contact, settings
+- ~~No form validation~~ -> Zod schemas with Turkish error messages
 
 ### Remaining Debt
 - Zustand is used only for mobile menu toggle - could be local state
@@ -479,10 +553,9 @@ const onSubmit = (data: any) => { ... };
 
 ### Missing Features
 - No actual images (all placeholders)
-- Forms only log to console (no backend integration)
-- No API routes
-- No authentication
-- No `.env` configuration
+- Forms still log to console (need wiring to API routes)
+- No authentication (Faz 5 - Auth.js v5)
+- Marketing pages still use static data (not yet migrated to DB queries)
 - Google Maps embed uses placeholder coordinates
 
 ---
