@@ -71,7 +71,16 @@ aesthetic-clinic/
 │   ├── admin/                        # Admin panel (URL prefix: /admin)
 │   │   ├── layout.tsx                # Auth check + SessionProvider + Sidebar + TopBar
 │   │   ├── page.tsx                  # Redirects to /admin/dashboard
-│   │   └── dashboard/page.tsx        # Admin dashboard
+│   │   ├── dashboard/page.tsx        # Stats, recent appointments, messages
+│   │   ├── hizmetler/page.tsx        # Services CRUD (DataTable + FormDialog)
+│   │   ├── urunler/page.tsx          # Products CRUD
+│   │   ├── blog/page.tsx             # Blog CRUD with publish toggle
+│   │   ├── galeri/page.tsx           # Gallery grid + category filter
+│   │   ├── randevular/page.tsx       # Appointments with status management
+│   │   ├── hastalar/page.tsx         # Patient records
+│   │   ├── mesajlar/page.tsx         # Contact messages (inbox style)
+│   │   ├── seo/page.tsx              # SEO audit dashboard
+│   │   └── ayarlar/page.tsx          # Site settings form
 │   │
 │   └── api/                          # REST API routes
 │       ├── auth/
@@ -102,7 +111,12 @@ aesthetic-clinic/
 │   │   └── SessionProvider.tsx       # Next-auth SessionProvider wrapper
 │   ├── admin/                        # Admin panel components
 │   │   ├── Sidebar.tsx               # Admin sidebar + signOut (client)
-│   │   └── TopBar.tsx                # Top bar + useSession (client)
+│   │   ├── TopBar.tsx                # Top bar + useSession (client)
+│   │   ├── PageHeader.tsx            # Page header with action button
+│   │   ├── DataTable.tsx             # Generic CRUD table (search, sort, pagination)
+│   │   ├── FormDialog.tsx            # Modal dialog for create/edit forms
+│   │   ├── DeleteConfirm.tsx         # Delete confirmation dialog
+│   │   └── StatusBadge.tsx           # Colored status badges
 │   ├── forms/                        # Extracted client form components
 │   │   ├── AppointmentForm.tsx       # Multi-step appointment form
 │   │   └── ContactForm.tsx           # Contact form + info
@@ -567,7 +581,7 @@ const onSubmit = (data: any) => { ... };
 
 ## Known Issues & Technical Debt
 
-### Fixed (Faz 1 + 1.5 + 2 + 3 + 4 + 5)
+### Fixed (Faz 1 + 1.5 + 2 + 3 + 4 + 5 + 6)
 - ~~All pages unnecessarily used `'use client'`~~ -> Refactored to Server Components
 - ~~Dynamic routes used `useParams()`~~ -> Async params prop (Next.js 16 pattern)
 - ~~No `generateStaticParams`~~ -> Added to all [slug] routes
@@ -597,14 +611,16 @@ const onSubmit = (data: any) => { ... };
 - ~~Auth pages were placeholders~~ -> Real forms with LoginForm, RegisterForm, ResetPasswordForm
 - ~~Admin panel unprotected~~ -> Middleware + server-side auth check + redirect to /giris
 - ~~No user session in admin~~ -> SessionProvider wrapper, TopBar shows user info, signOut buttons
+- ~~No admin panel CRUD pages~~ -> Full CRUD for services, products, blog, gallery + appointments, patients, messages, SEO, settings pages
+- ~~Admin dashboard was placeholder~~ -> Enhanced with stats, quick links, recent appointments, recent messages
 
 ### Remaining Debt
 - Zustand is used only for mobile menu toggle - could be local state
 - `CategoryFilter` and `GalleryGrid` have duplicate filter button styles
+- Admin CRUD pages use static data (will switch to DB queries when connected)
 
 ### Missing Features
 - No actual images (all placeholders)
-- Forms still log to console (need wiring to API routes)
 - Marketing pages still use static data (not yet migrated to DB queries)
 - Google Maps embed uses placeholder coordinates
 - Password reset sends no actual email (placeholder endpoint)
