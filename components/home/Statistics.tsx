@@ -30,16 +30,16 @@ const stats = [
 export default function Statistics() {
     return (
         <section className="section-container bg-gradient-to-br from-primary-600 via-primary-700 to-secondary-600 text-white">
-            <div className="text-center max-w-3xl mx-auto mb-16">
-                <h2 className="text-4xl md:text-5xl font-display font-bold mb-4">
+            <div className="text-center max-w-3xl mx-auto mb-8 sm:mb-12 md:mb-16">
+                <h2 className="text-3xl sm:text-4xl md:text-5xl font-display font-bold mb-4">
                     Rakamlarla Biz
                 </h2>
-                <p className="text-lg text-primary-100">
+                <p className="text-base sm:text-lg text-primary-100">
                     Yıllardır süren deneyimimiz ve memnun müşterilerimizle gurur duyuyoruz
                 </p>
             </div>
 
-            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-8">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 sm:gap-8">
                 {stats.map((stat, index) => (
                     <div
                         key={index}
@@ -49,8 +49,8 @@ export default function Statistics() {
                             <stat.icon className="w-8 h-8 text-white" />
                         </div>
                         <div>
-                            <p className="text-4xl md:text-5xl font-bold mb-2">{stat.value}</p>
-                            <p className="text-xl font-semibold mb-1">{stat.label}</p>
+                            <p className="text-2xl sm:text-3xl md:text-5xl font-bold mb-2">{stat.value}</p>
+                            <p className="text-base sm:text-lg md:text-xl font-semibold mb-1">{stat.label}</p>
                             <p className="text-sm text-primary-100">{stat.description}</p>
                         </div>
                     </div>

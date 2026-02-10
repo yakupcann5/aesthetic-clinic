@@ -110,15 +110,15 @@
 }
 
 .btn-primary {
-  @apply px-6 py-3 bg-gradient-to-r from-primary-500 to-primary-600 text-white font-semibold rounded-full shadow-lg hover:shadow-xl hover:scale-105 transition-all duration-300 ease-out;
+  @apply px-5 sm:px-6 py-3 bg-gradient-to-r from-primary-500 to-primary-600 text-white text-sm sm:text-base font-semibold rounded-full shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 transition-all duration-300 ease-out;
 }
 
 .btn-secondary {
-  @apply px-6 py-3 bg-gradient-to-r from-secondary-500 to-secondary-600 text-white font-semibold rounded-full shadow-lg hover:shadow-xl hover:scale-105 transition-all duration-300 ease-out;
+  @apply px-5 sm:px-6 py-3 bg-gradient-to-r from-secondary-500 to-secondary-600 text-white text-sm sm:text-base font-semibold rounded-full shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 transition-all duration-300 ease-out;
 }
 
 .btn-outline {
-  @apply px-6 py-3 border-2 border-primary-500 text-primary-600 font-semibold rounded-full hover:bg-primary-500 hover:text-white transition-all duration-300 ease-out;
+  @apply px-5 sm:px-6 py-3 border-2 border-primary-500 text-primary-600 text-sm sm:text-base font-semibold rounded-full hover:bg-primary-500 hover:text-white active:scale-95 transition-all duration-300 ease-out;
 }
 
 .section-container {
@@ -171,15 +171,15 @@
   }
 
   h1 {
-    @apply text-4xl md:text-5xl lg:text-6xl;
+    @apply text-3xl sm:text-4xl md:text-5xl lg:text-6xl;
   }
 
   h2 {
-    @apply text-3xl md:text-4xl lg:text-5xl;
+    @apply text-2xl sm:text-3xl md:text-4xl lg:text-5xl;
   }
 
   h3 {
-    @apply text-2xl md:text-3xl lg:text-4xl;
+    @apply text-xl sm:text-2xl md:text-3xl lg:text-4xl;
   }
 
   /* Custom Scrollbar */

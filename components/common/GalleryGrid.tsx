@@ -25,13 +25,13 @@ export default function GalleryGrid({ categories, items }: GalleryGridProps) {
       {/* Filter Section */}
       <section className="py-8 border-b border-gray-100 bg-white">
         <div className="section-container py-0">
-          <div className="flex flex-wrap justify-center gap-4">
+          <div className="flex flex-wrap justify-center gap-2 sm:gap-4">
             {categories.map((category) => (
               <button
                 key={category.value}
                 onClick={() => setSelectedCategory(category.value)}
                 className={cn(
-                  'px-6 py-2 rounded-full text-sm font-medium transition-all duration-300',
+                  'px-4 sm:px-6 py-2.5 sm:py-2 rounded-full text-xs sm:text-sm font-medium transition-all duration-300',
                   selectedCategory === category.value
                     ? 'bg-primary-600 text-white shadow-lg scale-105'
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
@@ -46,7 +46,7 @@ export default function GalleryGrid({ categories, items }: GalleryGridProps) {
 
       {/* Gallery Grid */}
       <section className="section-container">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
           <AnimatePresence mode="popLayout">
             {filteredItems.map((item) => (
               <motion.div
@@ -101,30 +101,30 @@ export default function GalleryGrid({ categories, items }: GalleryGridProps) {
             </button>
 
             <div
-              className="max-w-5xl w-full bg-white rounded-2xl overflow-hidden"
+              className="max-w-5xl w-full bg-white rounded-2xl overflow-hidden max-h-[90vh] overflow-y-auto"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="grid grid-cols-1 md:grid-cols-2 h-[60vh] md:h-[70vh]">
+              <div className="grid grid-cols-2 md:grid-cols-2 h-[30vh] sm:h-[40vh] md:h-[50vh] lg:h-[60vh]">
                 <div className="relative bg-gray-100 flex items-center justify-center border-r border-gray-200">
-                  <span className="absolute top-4 left-4 px-3 py-1 bg-black/50 text-white rounded-full text-sm">Öncesi</span>
-                  <p className="text-gray-400">Görsel Yükleniyor...</p>
+                  <span className="absolute top-2 left-2 sm:top-4 sm:left-4 px-2 sm:px-3 py-1 bg-black/50 text-white rounded-full text-xs sm:text-sm">Öncesi</span>
+                  <p className="text-gray-400 text-xs sm:text-base">Görsel Yükleniyor...</p>
                 </div>
                 <div className="relative bg-gray-100 flex items-center justify-center">
-                  <span className="absolute top-4 right-4 px-3 py-1 bg-primary-600 text-white rounded-full text-sm">Sonrası</span>
-                  <p className="text-gray-400">Görsel Yükleniyor...</p>
+                  <span className="absolute top-2 right-2 sm:top-4 sm:right-4 px-2 sm:px-3 py-1 bg-primary-600 text-white rounded-full text-xs sm:text-sm">Sonrası</span>
+                  <p className="text-gray-400 text-xs sm:text-base">Görsel Yükleniyor...</p>
                 </div>
               </div>
-              <div className="p-6 bg-white">
-                <h3 className="text-2xl font-display font-bold text-gray-900 mb-2">
+              <div className="p-4 sm:p-6 bg-white">
+                <h3 className="text-lg sm:text-2xl font-display font-bold text-gray-900 mb-2">
                   {selectedImage.service}
                 </h3>
-                <div className="flex items-center gap-4 text-sm text-gray-500 mb-4">
-                  <span className="px-3 py-1 bg-gray-100 rounded-full">
+                <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-xs sm:text-sm text-gray-500 mb-3 sm:mb-4">
+                  <span className="px-2 sm:px-3 py-1 bg-gray-100 rounded-full">
                     {galleryCategories.find(c => c.value === selectedImage.category)?.label}
                   </span>
                   <span>{selectedImage.date}</span>
                 </div>
-                <p className="text-gray-600">
+                <p className="text-sm sm:text-base text-gray-600">
                   {selectedImage.description}
                 </p>
               </div>

@@ -29,6 +29,8 @@ aesthetic-clinic/
 │   ├── layout.tsx                # Root layout (fonts, Header, Footer)
 │   ├── page.tsx                  # Home page (Server Component)
 │   ├── globals.css               # Global styles + Tailwind @theme
+│   ├── loading.tsx               # Root loading state
+│   ├── error.tsx                 # Root error boundary
 │   ├── not-found.tsx             # 404 page
 │   ├── blog/                     # Blog listing & detail
 │   │   ├── page.tsx
@@ -51,6 +53,8 @@ aesthetic-clinic/
 │   │   ├── Select.tsx            # Dropdown select with forwardRef
 │   │   ├── Textarea.tsx          # Textarea with forwardRef
 │   │   ├── Card.tsx              # Card wrapper (glass/solid variants)
+│   │   ├── CategoryFilter.tsx   # Generic category filter (client component)
+│   │   ├── GalleryGrid.tsx      # Gallery grid with lightbox (client component)
 │   │   ├── Modal.tsx             # Animated modal dialog
 │   │   └── Loading.tsx           # Loading spinner
 │   └── home/                     # Homepage section components
@@ -264,6 +268,47 @@ app/
 | `.image-overlay` | Image with gradient overlay on hover |
 | `.shimmer` | Loading shimmer animation |
 
+### Mobile-First Responsive Design (MANDATORY)
+
+Every page and component MUST be mobile-responsive. Design mobile-first, then scale up.
+
+**Breakpoint strategy:** Base styles = mobile (< 640px), then `sm:` (640px), `md:` (768px), `lg:` (1024px).
+
+| Pattern | Mobile | sm+ | md+ | lg+ |
+|---------|--------|-----|-----|-----|
+| H1 text | `text-3xl` | `sm:text-4xl` | `md:text-5xl` | `lg:text-6xl` |
+| H2 text | `text-2xl` | `sm:text-3xl` | `md:text-4xl` | `lg:text-5xl` |
+| Body text | `text-base` | `sm:text-lg` | `md:text-xl` | - |
+| Section padding | `py-12` | `sm:py-16` | `md:py-20` | - |
+| Card padding | `p-4` | `sm:p-6` | `md:p-8` | - |
+| Grid gap | `gap-4` or `gap-6` | `sm:gap-6` | `sm:gap-8` | `lg:gap-8` |
+| Grid cols | `grid-cols-1` | `sm:grid-cols-2` | `md:grid-cols-2` | `lg:grid-cols-3` |
+
+**Rules:**
+- Touch targets: minimum `py-2.5` (44px) on all interactive elements
+- Buttons: `active:scale-95` for mobile tap feedback
+- Sticky sidebars: `lg:sticky lg:top-24` (disable on mobile, they stack below)
+- Hero heights: `h-[50vh] md:h-[60vh]` with `min-h-[350px] md:min-h-[500px]`
+- Negative margins: scale down on mobile `(-mt-10 sm:-mt-16 md:-mt-20)`
+- Hide decorative elements on mobile: `hidden sm:block` for floating cards
+- Filter buttons: `text-xs sm:text-sm` with `px-4 sm:px-6 py-2.5 sm:py-2`
+- Footer links: `flex-wrap` with `gap-4 sm:gap-6`
+- Lightbox/modals: `max-h-[90vh] overflow-y-auto` for scrollability
+
+**Example - Responsive page hero:**
+```tsx
+<section className="py-12 sm:py-16 md:py-20 bg-primary-50">
+  <div className="section-container text-center">
+    <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-display font-bold text-gray-900 mb-4 sm:mb-6">
+      Page Title
+    </h1>
+    <p className="text-base sm:text-lg text-gray-600 max-w-2xl mx-auto">
+      Description text
+    </p>
+  </div>
+</section>
+```
+
 ### Component Patterns
 
 - Use `cn()` from `@/lib/utils` for conditional class merging
@@ -358,25 +403,24 @@ const onSubmit = (data: any) => { ... };
 
 ## Known Issues & Technical Debt
 
-### Bugs
-- `app/galeri/page.tsx:90` references `item.title` which does not exist on `GalleryItem` type (should be `item.description` or `item.service`)
-- `app/urunler/page.tsx:100` references `product.shortDescription` which does not exist on `Product` type (should be `product.description`)
-- Footer address (Nisantasi) differs from Contact page address (Bagdat Caddesi) - should be consistent
+### Fixed (Faz 1 + 1.5)
+- ~~All pages unnecessarily used `'use client'`~~ -> Refactored to Server Components
+- ~~Dynamic routes used `useParams()`~~ -> Async params prop (Next.js 16 pattern)
+- ~~No `generateStaticParams`~~ -> Added to all [slug] routes
+- ~~No per-page metadata~~ -> Added `metadata`/`generateMetadata` to all pages
+- ~~No `loading.tsx`/`error.tsx`~~ -> Added root boundary files
+- ~~`forwardRef` in Input/Select/Textarea~~ -> React 19 ref-as-prop pattern
+- ~~Hybrid Tailwind config~~ -> Consolidated into CSS `@theme`
+- ~~Form `any` types~~ -> Properly typed
+- ~~`@tanstack/react-query`, `nodemailer`~~ -> Removed unused deps
+- ~~Gallery `item.title` bug~~ -> Uses `item.service`
+- ~~Products `shortDescription` bug~~ -> Uses `product.description`
+- ~~Address inconsistency~~ -> Unified to Bagdat Caddesi
+- ~~Mobile responsiveness issues~~ -> All pages mobile-optimized
 
-### Architecture Debt
-- All pages unnecessarily use `'use client'` - should refactor to Server Components
-- Dynamic routes use `useParams()` instead of receiving params as async props
-- No `generateStaticParams` on any dynamic route
-- No per-page metadata exports (bad for SEO)
-- No `loading.tsx` or `error.tsx` boundary files
-- `forwardRef` used in Input, Select, Textarea - unnecessary with React 19
-- `tailwind.config.ts` is redundant with Tailwind v4 `@theme` in globals.css
-- Form `onSubmit` handlers use `any` type
-
-### Unused Dependencies
-- `@tanstack/react-query` - installed but never imported anywhere
-- `nodemailer` - installed but no API routes or server-side email sending
+### Remaining Debt
 - Zustand is used only for mobile menu toggle - could be local state
+- `CategoryFilter` and `GalleryGrid` have duplicate filter button styles
 
 ### Missing Features
 - No actual images (all placeholders)
@@ -440,26 +484,26 @@ export default function ComponentName({ props }: Props) {
 ```
 
 ### Page Structure Pattern
-Every page follows a consistent section pattern:
+Every page follows a consistent mobile-first section pattern:
 ```tsx
 <div className="min-h-screen pb-20">
-  {/* Hero Section */}
-  <section className="py-20 bg-primary-50">
+  {/* Hero Section - responsive padding & text */}
+  <section className="py-12 sm:py-16 md:py-20 bg-primary-50">
     <div className="section-container text-center">
-      <h1>...</h1>
-      <p>...</p>
+      <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl ...">...</h1>
+      <p className="text-base sm:text-lg ...">...</p>
     </div>
   </section>
 
   {/* Filter Section (if applicable) */}
   <section className="py-8 border-b border-gray-100 bg-white">
-    {/* Category filter buttons */}
+    {/* Category filter buttons with responsive sizing */}
   </section>
 
-  {/* Content Grid */}
+  {/* Content Grid - responsive gaps */}
   <section className="section-container">
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-      {/* Items */}
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
+      {/* Items with responsive card padding */}
     </div>
   </section>
 </div>

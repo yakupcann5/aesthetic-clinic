@@ -18,17 +18,17 @@ export default function ContactPage() {
     return (
         <div className="min-h-screen pb-20">
             {/* Hero Section */}
-            <section className="py-20 bg-primary-50">
+            <section className="py-12 sm:py-16 md:py-20 bg-primary-50">
                 <div className="section-container text-center">
                     <motion.div
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.6 }}
                     >
-                        <h1 className="text-4xl md:text-5xl lg:text-6xl font-display font-bold text-gray-900 mb-6">
+                        <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-display font-bold text-gray-900 mb-4 sm:mb-6">
                             İletişim
                         </h1>
-                        <p className="text-lg text-gray-600 max-w-2xl mx-auto">
+                        <p className="text-base sm:text-lg text-gray-600 max-w-2xl mx-auto">
                             Sorularınız, randevu talepleriniz veya önerileriniz için bize ulaşın. Size yardımcı olmaktan mutluluk duyarız.
                         </p>
                     </motion.div>
@@ -36,13 +36,13 @@ export default function ContactPage() {
             </section>
 
             <section className="section-container">
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:gap-12">
                     {/* Contact Info */}
                     <div className="lg:col-span-1 space-y-8">
                         <motion.div
                             initial={{ opacity: 0, x: -20 }}
                             animate={{ opacity: 1, x: 0 }}
-                            className="glass-card p-8 space-y-8"
+                            className="glass-card p-5 sm:p-8 space-y-6 sm:space-y-8"
                         >
                             <div>
                                 <h3 className="text-xl font-display font-bold text-gray-900 mb-6">
@@ -115,7 +115,7 @@ export default function ContactPage() {
                         <motion.div
                             initial={{ opacity: 0, x: 20 }}
                             animate={{ opacity: 1, x: 0 }}
-                            className="glass-card p-8 md:p-12"
+                            className="glass-card p-5 sm:p-8 md:p-12"
                         >
                             <h2 className="text-2xl font-display font-bold text-gray-900 mb-6">
                                 Bize Yazın
@@ -173,7 +173,7 @@ export default function ContactPage() {
                 </div>
 
                 {/* Map */}
-                <div className="mt-12 rounded-2xl overflow-hidden h-[400px] shadow-lg">
+                <div className="mt-8 sm:mt-12 rounded-2xl overflow-hidden h-[250px] sm:h-[350px] md:h-[400px] shadow-lg">
                     <iframe
                         src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3011.650490010173!2d29.0212!3d40.9812!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x0%3A0x0!2zNDDCsDU4JzUyLjMiTiAyOcKwMDEnMTYuMyJF!5e0!3m2!1str!2str!4v1635789000000!5m2!1str!2str"
                         width="100%"

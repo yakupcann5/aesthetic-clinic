@@ -31,13 +31,13 @@ export default function CategoryFilter<T>({
     <>
       <section className="py-8 border-b border-gray-100 bg-white">
         <div className="section-container py-0">
-          <div className="flex flex-wrap justify-center gap-4">
+          <div className="flex flex-wrap justify-center gap-2 sm:gap-4">
             {categories.map((category) => (
               <button
                 key={category.value}
                 onClick={() => setSelectedCategory(category.value)}
                 className={cn(
-                  'px-6 py-2 rounded-full text-sm font-medium transition-all duration-300',
+                  'px-4 sm:px-6 py-2.5 sm:py-2 rounded-full text-xs sm:text-sm font-medium transition-all duration-300',
                   selectedCategory === category.value
                     ? 'bg-primary-600 text-white shadow-lg scale-105'
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'

@@ -44,21 +44,21 @@ export default async function BlogPostPage({ params }: Props) {
   return (
     <div className="min-h-screen pb-20">
       {/* Header Image */}
-      <div className="relative h-[50vh] min-h-[400px] bg-gray-900">
+      <div className="relative h-[45vh] md:h-[50vh] min-h-[320px] md:min-h-[400px] bg-gray-900">
         <div className="absolute inset-0 bg-gray-800" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
 
-        <div className="absolute bottom-0 left-0 right-0 p-8 md:p-12">
+        <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-8 md:p-12">
           <div className="max-w-4xl mx-auto text-white">
             <Link
               href="/blog"
-              className="inline-flex items-center gap-2 text-gray-300 hover:text-white mb-6 transition-colors"
+              className="inline-flex items-center gap-2 text-gray-300 hover:text-white mb-4 sm:mb-6 transition-colors"
             >
               <ArrowLeft className="w-4 h-4" />
               Blog&apos;a Dön
             </Link>
 
-            <div className="flex items-center gap-4 text-sm text-primary-300 mb-4">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-xs sm:text-sm text-primary-300 mb-3 sm:mb-4">
               <span className="px-3 py-1 bg-primary-500/20 backdrop-blur-sm rounded-full border border-primary-500/30">
                 {post.category}
               </span>
@@ -72,7 +72,7 @@ export default async function BlogPostPage({ params }: Props) {
               </div>
             </div>
 
-            <h1 className="text-3xl md:text-4xl lg:text-5xl font-display font-bold mb-6 leading-tight">
+            <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-display font-bold mb-4 sm:mb-6 leading-tight">
               {post.title}
             </h1>
 
@@ -89,12 +89,12 @@ export default async function BlogPostPage({ params }: Props) {
         </div>
       </div>
 
-      <div className="section-container relative z-10 -mt-10">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
+      <div className="section-container relative z-10 -mt-6 sm:-mt-10">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12">
           {/* Main Content */}
-          <article className="lg:col-span-8 glass-card p-8 md:p-12">
+          <article className="lg:col-span-8 glass-card p-5 sm:p-8 md:p-12">
             <div className="prose prose-lg prose-purple max-w-none">
-              <p className="lead text-xl text-gray-600 mb-8 font-medium">
+              <p className="lead text-base sm:text-lg md:text-xl text-gray-600 mb-6 sm:mb-8 font-medium">
                 {post.excerpt}
               </p>
               <div className="text-gray-700 leading-relaxed whitespace-pre-wrap">

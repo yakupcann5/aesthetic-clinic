@@ -16,7 +16,7 @@ function BlogCard({ post }: { post: BlogPost }) {
       <Link href={`/blog/${post.slug}`} className="flex flex-col h-full">
         <div className="glass-card overflow-hidden h-full hover:shadow-2xl transition-all duration-300 hover:-translate-y-2">
           {/* Image */}
-          <div className="relative h-56 overflow-hidden bg-gray-200">
+          <div className="relative h-44 sm:h-56 overflow-hidden bg-gray-200">
             <div className="absolute inset-0 bg-gray-300" />
             <div className="absolute top-4 left-4 z-10">
               <span className="px-3 py-1 bg-white/90 backdrop-blur-sm rounded-full text-xs font-bold text-primary-600 uppercase tracking-wider">
@@ -26,7 +26,7 @@ function BlogCard({ post }: { post: BlogPost }) {
           </div>
 
           {/* Content */}
-          <div className="p-6 flex flex-col flex-grow">
+          <div className="p-4 sm:p-6 flex flex-col flex-grow">
             <div className="flex items-center gap-4 text-xs text-gray-500 mb-4">
               <div className="flex items-center gap-1">
                 <Calendar className="w-3 h-3" />
@@ -69,13 +69,13 @@ export default function BlogPage() {
   return (
     <div className="min-h-screen pb-20">
       {/* Hero Section */}
-      <section className="py-20 bg-primary-50">
+      <section className="py-12 sm:py-16 md:py-20 bg-primary-50">
         <div className="section-container text-center">
           <div>
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-display font-bold text-gray-900 mb-6">
+            <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-display font-bold text-gray-900 mb-4 sm:mb-6">
               Blog & Makaleler
             </h1>
-            <p className="text-lg text-gray-600 max-w-2xl mx-auto">
+            <p className="text-base sm:text-lg text-gray-600 max-w-2xl mx-auto">
               Güzellik, estetik ve sağlık dünyasından en güncel bilgiler, ipuçları ve uzman görüşleri.
             </p>
           </div>
@@ -88,7 +88,7 @@ export default function BlogPage() {
         filterKey="category"
         renderItems={(filteredPosts) => (
           <section className="section-container">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
               {filteredPosts.map((post) => (
                 <BlogCard key={post.id} post={post} />
               ))}

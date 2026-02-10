@@ -30,17 +30,17 @@ export default function AppointmentPage() {
     return (
         <div className="min-h-screen pb-20">
             {/* Hero Section */}
-            <section className="py-20 bg-primary-50">
+            <section className="py-12 sm:py-16 md:py-20 bg-primary-50">
                 <div className="section-container text-center">
                     <motion.div
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.6 }}
                     >
-                        <h1 className="text-4xl md:text-5xl lg:text-6xl font-display font-bold text-gray-900 mb-6">
+                        <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-display font-bold text-gray-900 mb-4 sm:mb-6">
                             Randevu Alın
                         </h1>
-                        <p className="text-lg text-gray-600 max-w-2xl mx-auto">
+                        <p className="text-base sm:text-lg text-gray-600 max-w-2xl mx-auto">
                             Size özel bir deneyim için hemen randevunuzu oluşturun. Uzmanlarımız en kısa sürede sizinle iletişime geçecektir.
                         </p>
                     </motion.div>
@@ -63,14 +63,14 @@ export default function AppointmentPage() {
                                 </div>
                             ))}
                         </div>
-                        <div className="flex justify-between mt-2 text-sm font-medium text-gray-600">
+                        <div className="flex justify-between mt-2 text-xs sm:text-sm font-medium text-gray-600">
                             <span>Hizmet & Tarih</span>
                             <span>Kişisel Bilgiler</span>
                             <span>Onay</span>
                         </div>
                     </div>
 
-                    <div className="glass-card p-8 md:p-12">
+                    <div className="glass-card p-4 sm:p-8 md:p-12">
                         {step === 3 ? (
                             <motion.div
                                 initial={{ opacity: 0, scale: 0.9 }}
@@ -127,7 +127,7 @@ export default function AppointmentPage() {
                                             <label className="block text-sm font-medium text-gray-700 mb-3">
                                                 Saat Seçiniz
                                             </label>
-                                            <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-3">
+                                            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2 sm:gap-3">
                                                 {timeSlots.map((time) => (
                                                     <label key={time} className="relative cursor-pointer">
                                                         <input
@@ -136,7 +136,7 @@ export default function AppointmentPage() {
                                                             {...register('time', { required: 'Saat seçimi zorunludur' })}
                                                             className="peer sr-only"
                                                         />
-                                                        <div className="px-2 py-2 text-center text-sm rounded-lg border border-gray-200 hover:border-primary-500 peer-checked:bg-primary-600 peer-checked:text-white peer-checked:border-primary-600 transition-all">
+                                                        <div className="px-2 py-2.5 sm:py-2 text-center text-sm rounded-lg border border-gray-200 hover:border-primary-500 peer-checked:bg-primary-600 peer-checked:text-white peer-checked:border-primary-600 transition-all">
                                                             {time}
                                                         </div>
                                                     </label>

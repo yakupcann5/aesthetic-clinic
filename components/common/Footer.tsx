@@ -40,7 +40,7 @@ export default function Footer() {
                             <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center">
                                 <span className="text-white font-bold text-xl">A</span>
                             </div>
-                            <span className="text-2xl font-display font-bold text-white">
+                            <span className="text-xl sm:text-2xl font-display font-bold text-white">
                                 Aesthetic Clinic
                             </span>
                         </div>
@@ -128,12 +128,12 @@ export default function Footer() {
                         <p className="text-sm text-gray-400">
                             © {new Date().getFullYear()} Aesthetic Clinic. Tüm hakları saklıdır.
                         </p>
-                        <div className="flex space-x-6">
+                        <div className="flex flex-wrap justify-center gap-4 sm:gap-6">
                             {footerLinks.bilgi.map((link) => (
                                 <Link
                                     key={link.name}
                                     href={link.href}
-                                    className="text-sm text-gray-400 hover:text-primary-400 transition-colors"
+                                    className="text-xs sm:text-sm text-gray-400 hover:text-primary-400 transition-colors"
                                 >
                                     {link.name}
                                 </Link>

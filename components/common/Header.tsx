@@ -22,13 +22,13 @@ export default function Header() {
     return (
         <header className="fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-lg border-b border-gray-200/50 shadow-sm">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="flex justify-between items-center h-20">
+                <div className="flex justify-between items-center h-16 sm:h-20">
                     {/* Logo */}
                     <Link href="/" className="flex items-center space-x-2" onClick={closeMenu}>
-                        <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center">
-                            <span className="text-white font-bold text-xl">A</span>
+                        <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center flex-shrink-0">
+                            <span className="text-white font-bold text-lg sm:text-xl">A</span>
                         </div>
-                        <span className="text-2xl font-display font-bold gradient-text">
+                        <span className="text-lg sm:text-xl lg:text-2xl font-display font-bold gradient-text">
                             Aesthetic Clinic
                         </span>
                     </Link>
@@ -91,7 +91,7 @@ export default function Header() {
                                     key={item.name}
                                     href={item.href}
                                     onClick={closeMenu}
-                                    className={`block px-4 py-2 rounded-lg text-base font-medium transition-colors ${pathname === item.href
+                                    className={`block px-4 py-3 rounded-lg text-base font-medium transition-colors ${pathname === item.href
                                             ? 'bg-primary-50 text-primary-600'
                                             : 'text-gray-700 hover:bg-gray-50'
                                         }`}

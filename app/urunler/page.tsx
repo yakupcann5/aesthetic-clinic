@@ -15,7 +15,7 @@ function ProductCard({ product }: { product: Product }) {
     <Link href={`/urunler/${product.slug}`} className="block h-full group">
       <div className="glass-card h-full overflow-hidden hover:shadow-2xl transition-all duration-300 hover:-translate-y-2 flex flex-col">
         {/* Image */}
-        <div className="relative aspect-square overflow-hidden bg-gray-100 p-8 flex items-center justify-center">
+        <div className="relative aspect-square overflow-hidden bg-gray-100 p-4 sm:p-8 flex items-center justify-center">
           <div className="w-3/4 h-3/4 bg-white shadow-lg rounded-xl flex items-center justify-center text-gray-300">
             <ShoppingBag className="w-12 h-12 opacity-20" />
           </div>
@@ -60,13 +60,13 @@ export default function ProductsPage() {
   return (
     <div className="min-h-screen pb-20">
       {/* Hero Section */}
-      <section className="py-20 bg-primary-50">
+      <section className="py-12 sm:py-16 md:py-20 bg-primary-50">
         <div className="section-container text-center">
           <div>
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-display font-bold text-gray-900 mb-6">
+            <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-display font-bold text-gray-900 mb-4 sm:mb-6">
               Dermo-Kozmetik Ürünler
             </h1>
-            <p className="text-lg text-gray-600 max-w-2xl mx-auto">
+            <p className="text-base sm:text-lg text-gray-600 max-w-2xl mx-auto">
               Uzmanlarımızın önerdiği, klinik onaylı profesyonel bakım ürünleri ile güzelliğinizi evde de koruyun.
             </p>
           </div>
@@ -79,7 +79,7 @@ export default function ProductsPage() {
         filterKey="category"
         renderItems={(filteredProducts) => (
           <section className="section-container">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 lg:gap-8">
               {filteredProducts.map((product) => (
                 <ProductCard key={product.id} product={product} />
               ))}

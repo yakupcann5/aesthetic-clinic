@@ -9,16 +9,16 @@ export default function FeaturedServices() {
 
     return (
         <section className="section-container bg-white">
-            <div className="text-center max-w-3xl mx-auto mb-16">
-                <h2 className="text-4xl md:text-5xl font-display font-bold mb-4">
+            <div className="text-center max-w-3xl mx-auto mb-8 sm:mb-12 md:mb-16">
+                <h2 className="text-3xl sm:text-4xl md:text-5xl font-display font-bold mb-4">
                     Popüler <span className="gradient-text">Hizmetlerimiz</span>
                 </h2>
-                <p className="text-lg text-gray-600">
+                <p className="text-base sm:text-lg text-gray-600">
                     En çok tercih edilen estetik uygulamalarımız ile güzelliğinizi ortaya çıkarın
                 </p>
             </div>
 
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
                 {featuredServices.map((service, index) => (
                     <Card
                         key={service.id}

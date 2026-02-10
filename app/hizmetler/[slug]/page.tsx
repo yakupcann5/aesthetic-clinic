@@ -42,7 +42,7 @@ export default async function ServiceDetailPage({ params }: Props) {
   return (
     <div className="min-h-screen pb-20">
       {/* Hero Section */}
-      <section className="relative h-[60vh] min-h-[500px] flex items-center justify-center overflow-hidden bg-gray-900">
+      <section className="relative h-[50vh] md:h-[60vh] min-h-[350px] md:min-h-[500px] flex items-center justify-center overflow-hidden bg-gray-900">
         <div className="absolute inset-0 bg-gradient-to-t from-gray-900 via-gray-900/50 to-transparent z-10" />
         <div className="absolute inset-0 bg-gray-800" />
 
@@ -51,13 +51,13 @@ export default async function ServiceDetailPage({ params }: Props) {
             <span className="inline-block px-4 py-1.5 rounded-full bg-primary-500/20 backdrop-blur-sm border border-primary-500/30 text-primary-200 text-sm font-medium mb-6">
               {service.category}
             </span>
-            <h1 className="text-5xl md:text-6xl lg:text-7xl font-display font-bold mb-6">
+            <h1 className="text-3xl sm:text-4xl md:text-6xl lg:text-7xl font-display font-bold mb-4 sm:mb-6">
               {service.title}
             </h1>
-            <p className="text-xl text-gray-300 max-w-2xl mx-auto mb-8">
+            <p className="text-base sm:text-lg md:text-xl text-gray-300 max-w-2xl mx-auto mb-6 sm:mb-8">
               {service.shortDescription}
             </p>
-            <div className="flex flex-wrap items-center justify-center gap-6 text-sm font-medium text-gray-300">
+            <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-6 text-xs sm:text-sm font-medium text-gray-300">
               <div className="flex items-center gap-2">
                 <Clock className="w-5 h-5 text-primary-400" />
                 {service.duration}
@@ -75,11 +75,11 @@ export default async function ServiceDetailPage({ params }: Props) {
         </div>
       </section>
 
-      <div className="section-container -mt-20 relative z-30">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="section-container -mt-10 sm:-mt-16 md:-mt-20 relative z-30">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8">
           {/* Main Content */}
-          <div className="lg:col-span-2 space-y-8">
-            <div className="glass-card p-8">
+          <div className="lg:col-span-2 space-y-6 sm:space-y-8">
+            <div className="glass-card p-5 sm:p-8">
               <h2 className="text-2xl font-display font-bold text-gray-900 mb-4">
                 Tedavi Hakkında
               </h2>
@@ -88,7 +88,7 @@ export default async function ServiceDetailPage({ params }: Props) {
               </p>
             </div>
 
-            <div className="glass-card p-8">
+            <div className="glass-card p-5 sm:p-8">
               <h2 className="text-2xl font-display font-bold text-gray-900 mb-6">
                 Uygulama Süreci
               </h2>
@@ -106,7 +106,7 @@ export default async function ServiceDetailPage({ params }: Props) {
               </div>
             </div>
 
-            <div className="glass-card p-8">
+            <div className="glass-card p-5 sm:p-8">
               <h2 className="text-2xl font-display font-bold text-gray-900 mb-6">
                 Avantajlar
               </h2>
@@ -125,7 +125,7 @@ export default async function ServiceDetailPage({ params }: Props) {
 
           {/* Sidebar */}
           <div className="lg:col-span-1">
-            <div className="sticky top-24 space-y-6">
+            <div className="lg:sticky lg:top-24 space-y-6">
               <div className="glass-card p-6 border-t-4 border-t-primary-500">
                 <h3 className="text-xl font-display font-bold text-gray-900 mb-2">
                   Randevu Oluştur
