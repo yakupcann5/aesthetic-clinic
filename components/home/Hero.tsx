@@ -19,7 +19,7 @@ export default function Hero() {
                         <div className="inline-flex items-center space-x-2 px-4 py-2 bg-primary-50 rounded-full">
                             <Sparkles className="w-4 h-4 text-primary-600" />
                             <span className="text-sm font-medium text-primary-600">
-                                Türkiye'nin Önde Gelen Estetik Kliniği
+                                Türkiye&apos;nin Önde Gelen Estetik Kliniği
                             </span>
                         </div>
 

@@ -62,7 +62,7 @@ export default function Testimonials() {
 
                             {/* Comment */}
                             <p className="text-gray-700 leading-relaxed">
-                                "{testimonial.comment}"
+                                &ldquo;{testimonial.comment}&rdquo;
                             </p>
 
                             {/* Author Info */}

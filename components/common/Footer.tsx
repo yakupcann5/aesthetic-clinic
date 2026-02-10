@@ -102,8 +102,8 @@ export default function Footer() {
                             <li className="flex items-start space-x-3">
                                 <MapPin className="w-5 h-5 text-primary-400 flex-shrink-0 mt-0.5" />
                                 <span className="text-sm">
-                                    Nişantaşı, Teşvikiye Cad. No:123<br />
-                                    Şişli, İstanbul
+                                    Bağdat Caddesi No: 123<br />
+                                    Kadıköy, İstanbul
                                 </span>
                             </li>
                             <li className="flex items-center space-x-3">
@@ -126,7 +126,7 @@ export default function Footer() {
                 <div className="mt-12 pt-8 border-t border-gray-800">
                     <div className="flex flex-col md:flex-row justify-between items-center space-y-4 md:space-y-0">
                         <p className="text-sm text-gray-400">
-                            © 2024 Aesthetic Clinic. Tüm hakları saklıdır.
+                            © {new Date().getFullYear()} Aesthetic Clinic. Tüm hakları saklıdır.
                         </p>
                         <div className="flex space-x-6">
                             {footerLinks.bilgi.map((link) => (

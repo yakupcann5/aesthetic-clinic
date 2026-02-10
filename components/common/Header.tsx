@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Menu, X, Phone, Mail } from 'lucide-react';
+import { Menu, X, Phone } from 'lucide-react';
 import { useStore } from '@/lib/store/useStore';
 import { motion, AnimatePresence } from 'framer-motion';
 

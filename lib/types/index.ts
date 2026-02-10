@@ -68,7 +68,7 @@ export interface AppointmentFormData {
     service: string;
     date: string;
     time: string;
-    message?: string;
+    notes?: string;
 }
 
 export interface ContactFormData {

@@ -2,12 +2,13 @@
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Calendar, Clock, Check, User, Phone, Mail, MessageSquare } from 'lucide-react';
+import { Calendar, Clock, Check, User } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import Input from '@/components/common/Input';
 import Select from '@/components/common/Select';
 import Textarea from '@/components/common/Textarea';
 import { services } from '@/lib/data/services';
+import type { AppointmentFormData } from '@/lib/types';
 
 const timeSlots = [
     '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
@@ -17,10 +18,8 @@ const timeSlots = [
 
 export default function AppointmentPage() {
     const [step, setStep] = useState(1);
-    const { register, handleSubmit, watch, formState: { errors } } = useForm();
-    const selectedService = watch('service');
-
-    const onSubmit = (data: any) => {
+    const { register, handleSubmit, formState: { errors } } = useForm<AppointmentFormData>();
+    const onSubmit = (data: AppointmentFormData) => {
         console.log(data);
         setStep(3); // Success step
     };

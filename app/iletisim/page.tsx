@@ -1,15 +1,16 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Phone, Mail, MapPin, Clock, Send } from 'lucide-react';
+import { Phone, Mail, MapPin, Send } from 'lucide-react';
 import Input from '@/components/common/Input';
 import Textarea from '@/components/common/Textarea';
 import { useForm } from 'react-hook-form';
+import type { ContactFormData } from '@/lib/types';
 
 export default function ContactPage() {
-    const { register, handleSubmit, formState: { errors } } = useForm();
+    const { register, handleSubmit, formState: { errors } } = useForm<ContactFormData>();
 
-    const onSubmit = (data: any) => {
+    const onSubmit = (data: ContactFormData) => {
         console.log(data);
         // Handle form submission
     };
