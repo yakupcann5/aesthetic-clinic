@@ -1,0 +1,31 @@
+import { galleryItems, galleryCategories } from '@/lib/data/gallery';
+import GalleryGrid from '@/components/common/GalleryGrid';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'Öncesi & Sonrası Galeri',
+  description: 'Hastalarımızın değişim hikayelerine tanık olun. Gerçek sonuçlar, gerçek mutluluklar.',
+  alternates: { canonical: '/galeri' },
+};
+
+export default function GalleryPage() {
+  return (
+    <div className="min-h-screen pb-20">
+      {/* Hero Section */}
+      <section className="py-12 sm:py-16 md:py-20 bg-primary-50">
+        <div className="section-container text-center">
+          <div>
+            <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-display font-bold text-gray-900 mb-4 sm:mb-6">
+              Öncesi & Sonrası
+            </h1>
+            <p className="text-base sm:text-lg text-gray-600 max-w-2xl mx-auto">
+              Hastalarımızın değişim hikayelerine tanık olun. Gerçek sonuçlar, gerçek mutluluklar.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <GalleryGrid categories={galleryCategories} items={galleryItems} />
+    </div>
+  );
+}

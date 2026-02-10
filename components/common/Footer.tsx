@@ -40,7 +40,7 @@ export default function Footer() {
                             <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center">
                                 <span className="text-white font-bold text-xl">A</span>
                             </div>
-                            <span className="text-2xl font-display font-bold text-white">
+                            <span className="text-xl sm:text-2xl font-display font-bold text-white">
                                 Aesthetic Clinic
                             </span>
                         </div>
@@ -102,8 +102,8 @@ export default function Footer() {
                             <li className="flex items-start space-x-3">
                                 <MapPin className="w-5 h-5 text-primary-400 flex-shrink-0 mt-0.5" />
                                 <span className="text-sm">
-                                    Nişantaşı, Teşvikiye Cad. No:123<br />
-                                    Şişli, İstanbul
+                                    Bağdat Caddesi No: 123<br />
+                                    Kadıköy, İstanbul
                                 </span>
                             </li>
                             <li className="flex items-center space-x-3">
@@ -126,14 +126,14 @@ export default function Footer() {
                 <div className="mt-12 pt-8 border-t border-gray-800">
                     <div className="flex flex-col md:flex-row justify-between items-center space-y-4 md:space-y-0">
                         <p className="text-sm text-gray-400">
-                            © 2024 Aesthetic Clinic. Tüm hakları saklıdır.
+                            © {new Date().getFullYear()} Aesthetic Clinic. Tüm hakları saklıdır.
                         </p>
-                        <div className="flex space-x-6">
+                        <div className="flex flex-wrap justify-center gap-4 sm:gap-6">
                             {footerLinks.bilgi.map((link) => (
                                 <Link
                                     key={link.name}
                                     href={link.href}
-                                    className="text-sm text-gray-400 hover:text-primary-400 transition-colors"
+                                    className="text-xs sm:text-sm text-gray-400 hover:text-primary-400 transition-colors"
                                 >
                                     {link.name}
                                 </Link>

@@ -31,16 +31,16 @@ const testimonials = [
 export default function Testimonials() {
     return (
         <section className="section-container bg-gradient-to-br from-slate-50 to-purple-50">
-            <div className="text-center max-w-3xl mx-auto mb-16">
-                <h2 className="text-4xl md:text-5xl font-display font-bold mb-4">
+            <div className="text-center max-w-3xl mx-auto mb-8 sm:mb-12 md:mb-16">
+                <h2 className="text-3xl sm:text-4xl md:text-5xl font-display font-bold mb-4">
                     Müşteri <span className="gradient-text">Yorumları</span>
                 </h2>
-                <p className="text-lg text-gray-600">
+                <p className="text-base sm:text-lg text-gray-600">
                     Binlerce mutlu müşterimizin deneyimlerinden bazıları
                 </p>
             </div>
 
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
                 {testimonials.map((testimonial, index) => (
                     <Card
                         key={testimonial.id}
@@ -62,7 +62,7 @@ export default function Testimonials() {
 
                             {/* Comment */}
                             <p className="text-gray-700 leading-relaxed">
-                                "{testimonial.comment}"
+                                &ldquo;{testimonial.comment}&rdquo;
                             </p>
 
                             {/* Author Info */}
