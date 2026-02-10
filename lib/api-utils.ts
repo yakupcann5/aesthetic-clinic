@@ -11,7 +11,7 @@ export function errorResponse(message: string, status = 400) {
 
 export function handleApiError(error: unknown) {
   if (error instanceof ZodError) {
-    const messages = error.errors.map((e) => e.message).join(', ');
+    const messages = error.issues.map((e: { message: string }) => e.message).join(', ');
     return errorResponse(messages, 400);
   }
 

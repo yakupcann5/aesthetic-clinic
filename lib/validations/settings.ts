@@ -11,7 +11,7 @@ export const updateSiteSettingsSchema = z.object({
   twitter: z.string().optional(),
   youtube: z.string().optional(),
   mapEmbedUrl: z.string().optional(),
-  workingHours: z.record(z.string()).optional(),
+  workingHours: z.record(z.string(), z.string()).optional(),
 });
 
 export type UpdateSiteSettingsInput = z.infer<typeof updateSiteSettingsSchema>;

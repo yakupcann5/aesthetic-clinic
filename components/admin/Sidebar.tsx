@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { signOut } from 'next-auth/react';
 import {
   LayoutDashboard,
   Scissors,
@@ -76,6 +77,7 @@ export default function Sidebar() {
           Siteye Dön
         </Link>
         <button
+          onClick={() => signOut({ callbackUrl: '/giris' })}
           className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-800 transition-colors w-full"
         >
           <LogOut className="w-5 h-5" />

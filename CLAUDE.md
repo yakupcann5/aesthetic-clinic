@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-Turkish-language aesthetic (cosmetic) clinic website built with Next.js 16, React 19, and Tailwind CSS 4. Backend infrastructure with PostgreSQL (via Prisma ORM) and REST API routes. Marketing pages still use static data; transition to database is ready.
+Turkish-language aesthetic (cosmetic) clinic website built with Next.js 16, React 19, and Tailwind CSS 4. Backend infrastructure with PostgreSQL (via Prisma ORM), REST API routes, and Auth.js v5 authentication. Marketing pages still use static data; transition to database is ready.
 
-**Tech Stack:** Next.js 16.0.6 | React 19.2.0 | TypeScript 5 | Tailwind CSS 4 | Framer Motion 12 | Prisma 7 | Zod 4 | Zustand 5 | React Hook Form 7 | Lucide React
+**Tech Stack:** Next.js 16.0.6 | React 19.2.0 | TypeScript 5 | Tailwind CSS 4 | Framer Motion 12 | Prisma 7 | Zod 4 | Auth.js v5 | Zustand 5 | React Hook Form 7 | Lucide React
 
 ---
 
@@ -64,16 +64,20 @@ aesthetic-clinic/
 │   │
 │   ├── (auth)/                       # Auth pages (no URL prefix)
 │   │   ├── layout.tsx                # Minimal centered layout
-│   │   ├── giris/page.tsx            # /giris (login)
-│   │   ├── kayit/page.tsx            # /kayit (register)
-│   │   └── sifre-sifirla/page.tsx    # /sifre-sifirla (reset password)
+│   │   ├── giris/page.tsx            # /giris (login) → LoginForm
+│   │   ├── kayit/page.tsx            # /kayit (register) → RegisterForm
+│   │   └── sifre-sifirla/page.tsx    # /sifre-sifirla → ResetPasswordForm
 │   │
 │   ├── admin/                        # Admin panel (URL prefix: /admin)
-│   │   ├── layout.tsx                # Sidebar + TopBar layout
+│   │   ├── layout.tsx                # Auth check + SessionProvider + Sidebar + TopBar
 │   │   ├── page.tsx                  # Redirects to /admin/dashboard
 │   │   └── dashboard/page.tsx        # Admin dashboard
 │   │
 │   └── api/                          # REST API routes
+│       ├── auth/
+│       │   ├── [...nextauth]/route.ts # Auth.js GET/POST handlers
+│       │   ├── register/route.ts      # User registration
+│       │   └── reset-password/route.ts # Password reset
 │       ├── services/                 # GET (list), POST (create)
 │       │   └── [id]/                 # GET, PUT, DELETE
 │       ├── products/, blog/, gallery/ # Same CRUD pattern
@@ -91,9 +95,14 @@ aesthetic-clinic/
 │   │   ├── CategoryFilter.tsx        # Category filter (client)
 │   │   ├── GalleryGrid.tsx           # Gallery grid + lightbox (client)
 │   │   └── Loading.tsx               # Loading spinner
+│   ├── auth/                         # Auth components
+│   │   ├── LoginForm.tsx             # Login form (client, signIn)
+│   │   ├── RegisterForm.tsx          # Register form (client, fetch)
+│   │   ├── ResetPasswordForm.tsx     # Reset password form (client)
+│   │   └── SessionProvider.tsx       # Next-auth SessionProvider wrapper
 │   ├── admin/                        # Admin panel components
-│   │   ├── Sidebar.tsx               # Admin sidebar navigation (client)
-│   │   └── TopBar.tsx                # Admin top bar (client)
+│   │   ├── Sidebar.tsx               # Admin sidebar + signOut (client)
+│   │   └── TopBar.tsx                # Top bar + useSession (client)
 │   ├── forms/                        # Extracted client form components
 │   │   ├── AppointmentForm.tsx       # Multi-step appointment form
 │   │   └── ContactForm.tsx           # Contact form + info
@@ -108,6 +117,7 @@ aesthetic-clinic/
 │
 ├── lib/
 │   ├── types/index.ts                # All TypeScript interfaces
+│   ├── auth.ts                       # Auth.js v5 config (Credentials, JWT, callbacks)
 │   ├── db.ts                         # Prisma client singleton
 │   ├── api-utils.ts                  # API response helpers
 │   ├── store/useStore.ts             # Zustand store (menu state)
@@ -126,7 +136,9 @@ aesthetic-clinic/
 │
 ├── prisma/
 │   ├── schema.prisma                 # Database schema (PostgreSQL)
-│   └── seed.ts                       # Seed script (static data → DB)
+│   └── seed.ts                       # Seed script (static data + admin user → DB)
+├── prisma.config.ts                  # Prisma 7 config (datasource URL)
+├── middleware.ts                      # Auth.js middleware (admin route protection)
 │
 ├── next.config.ts                    # React Compiler, image optimization
 ├── tailwind.config.ts                # Tailwind (legacy, @theme in CSS)
@@ -169,7 +181,9 @@ export default function ServiceDetailPage() {
 ```
 
 Components that MUST be client components:
-- `Header.tsx`, `Sidebar.tsx`, `TopBar.tsx` - navigation, `usePathname()`, event handlers
+- `Header.tsx`, `Sidebar.tsx`, `TopBar.tsx` - navigation, `usePathname()`, `signOut()`
+- `LoginForm.tsx`, `RegisterForm.tsx`, `ResetPasswordForm.tsx` - auth forms with state
+- `SessionProvider.tsx` - wraps `next-auth/react` SessionProvider
 - `Modal.tsx` - uses `useEffect`, event handlers
 - `AppointmentForm.tsx`, `ContactForm.tsx` - use `useForm()`, `useState`
 - `CategoryFilter.tsx`, `GalleryGrid.tsx` - use `useState`
@@ -283,7 +297,7 @@ The project uses **route groups** to separate marketing, auth, and admin section
 |-------------|-----------|--------|---------|
 | `(marketing)` | none | Header + Footer + JSON-LD | Public marketing site |
 | `(auth)` | none | Centered card | Login, register, password reset |
-| `admin/` | `/admin` | Sidebar + TopBar | Admin panel (placeholder) |
+| `admin/` | `/admin` | Auth check + SessionProvider + Sidebar + TopBar | Protected admin panel |
 
 **Rules:**
 - Marketing pages go in `app/(marketing)/` - URLs are unchanged (e.g., `/hizmetler`)
@@ -293,7 +307,40 @@ The project uses **route groups** to separate marketing, auth, and admin section
 - Root `not-found.tsx`, `error.tsx`, `loading.tsx` provide global fallbacks
 - Root `sitemap.ts`, `robots.ts`, `opengraph-image.tsx` are metadata routes (not page routes)
 
-### 8. Loading & Error Boundaries
+### 8. Authentication (Auth.js v5)
+
+Auth.js v5 (next-auth@beta) with Credentials provider and JWT sessions.
+
+**Configuration:** `lib/auth.ts`
+- Credentials provider with email/password (validated via Zod `loginSchema`)
+- Password hashing with bcryptjs (12 rounds)
+- JWT session strategy (no database sessions)
+- Custom callbacks: `jwt` (adds `id`, `role`), `session` (exposes `id`, `role`), `authorized` (protects `/admin/*`)
+
+**Route Protection:**
+- `middleware.ts` exports Auth.js middleware, matches `/admin/:path*`
+- `app/admin/layout.tsx` does server-side `auth()` check, redirects to `/giris`
+- Double protection: middleware (edge) + layout (server-side)
+
+**Session Access:**
+- Server components: `const session = await auth();` from `@/lib/auth`
+- Client components: `useSession()` from `next-auth/react` (requires `SessionProvider` wrapper)
+- Admin layout wraps children with `SessionProvider`
+
+**Roles:**
+- `ADMIN` - Full admin panel access
+- `STAFF` - Limited access (not yet enforced per-page)
+
+**Auth Pages:**
+- All auth pages are Server Components that import client form components
+- Pages export `metadata` with `robots: { index: false, follow: false }`
+- Forms handle error/loading states with Turkish error messages
+
+**Default Admin Account (seed):**
+- Email: `admin@aestheticclinic.com`
+- Password: `admin123`
+
+### 9. Loading & Error Boundaries
 
 Add Next.js App Router conventions for loading and error states:
 
@@ -520,7 +567,7 @@ const onSubmit = (data: any) => { ... };
 
 ## Known Issues & Technical Debt
 
-### Fixed (Faz 1 + 1.5 + 2 + 3 + 4)
+### Fixed (Faz 1 + 1.5 + 2 + 3 + 4 + 5)
 - ~~All pages unnecessarily used `'use client'`~~ -> Refactored to Server Components
 - ~~Dynamic routes used `useParams()`~~ -> Async params prop (Next.js 16 pattern)
 - ~~No `generateStaticParams`~~ -> Added to all [slug] routes
@@ -546,6 +593,10 @@ const onSubmit = (data: any) => { ... };
 - ~~No backend/database~~ -> Prisma + PostgreSQL schema, API routes, Zod validation
 - ~~No API routes~~ -> Full CRUD for services, products, blog, gallery, appointments, contact, settings
 - ~~No form validation~~ -> Zod schemas with Turkish error messages
+- ~~No authentication~~ -> Auth.js v5 with Credentials provider, JWT sessions, role-based access
+- ~~Auth pages were placeholders~~ -> Real forms with LoginForm, RegisterForm, ResetPasswordForm
+- ~~Admin panel unprotected~~ -> Middleware + server-side auth check + redirect to /giris
+- ~~No user session in admin~~ -> SessionProvider wrapper, TopBar shows user info, signOut buttons
 
 ### Remaining Debt
 - Zustand is used only for mobile menu toggle - could be local state
@@ -554,9 +605,11 @@ const onSubmit = (data: any) => { ... };
 ### Missing Features
 - No actual images (all placeholders)
 - Forms still log to console (need wiring to API routes)
-- No authentication (Faz 5 - Auth.js v5)
 - Marketing pages still use static data (not yet migrated to DB queries)
 - Google Maps embed uses placeholder coordinates
+- Password reset sends no actual email (placeholder endpoint)
+- No email verification flow
+- No admin panel CRUD pages (Faz 6)
 
 ---
 

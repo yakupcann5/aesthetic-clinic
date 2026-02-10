@@ -498,50 +498,78 @@ lib/validations/
 
 ---
 
-## Faz 5: Authentication ve Yetkilendirme
+## Faz 5: Authentication ve Yetkilendirme ✅
 
 > Auth.js v5 ile giris, kayit ve rol tabanli erisim kontrolu.
 
 ### 5.1 Auth.js v5 Kurulumu
 
 ```bash
-npm install next-auth@5 @auth/prisma-adapter bcryptjs
+npm install next-auth@beta @auth/prisma-adapter bcryptjs
 npm install -D @types/bcryptjs
 ```
 
 Dosyalar:
 ```
 lib/
-├── auth.ts              # NextAuth config (adapter ile)
-├── auth.config.ts       # Auth config (adapter'siz — proxy icin)
+├── auth.ts              # NextAuth config (Credentials provider, JWT sessions)
 ```
 
-### 5.2 proxy.ts (Next.js 16 Middleware Yerine)
+### 5.2 Middleware (Admin Route Korumasi)
 
 ```tsx
-// proxy.ts — admin route'larini koru
-export async function proxy(request) {
-  const session = await auth();
-  if (request.nextUrl.pathname.startsWith('/dashboard') && !session) {
-    return NextResponse.redirect(new URL('/giris', request.url));
-  }
-}
+// middleware.ts
+export { auth as middleware } from '@/lib/auth';
+export const config = { matcher: ['/admin/:path*'] };
 ```
 
-### 5.3 Auth Sayfalari
+Auth.js v5 `authorized` callback ile middleware entegrasyonu:
+- `/admin/*` path'leri icin oturum kontrolu
+- Oturumsuz kullanicilar `/giris` sayfasina yonlendirilir
+
+### 5.3 Auth Sayfalari ve Componentler
 
 ```
 app/(auth)/
-├── layout.tsx              # Merkezi minimal layout
-├── giris/page.tsx          # E-posta + sifre giris formu
-├── kayit/page.tsx          # Kayit formu (sadece admin davet ile?)
-└── sifre-sifirla/page.tsx  # Sifre sifirlama
+├── layout.tsx                     # Merkezi minimal layout (Header/Footer yok)
+├── giris/page.tsx                 # Server Component + LoginForm import
+├── kayit/page.tsx                 # Server Component + RegisterForm import
+└── sifre-sifirla/page.tsx         # Server Component + ResetPasswordForm import
+
+components/auth/
+├── LoginForm.tsx                  # Client: signIn('credentials'), hata/yukleniyor state
+├── RegisterForm.tsx               # Client: fetch /api/auth/register, sifre eslestirme
+├── ResetPasswordForm.tsx          # Client: fetch /api/auth/reset-password, basari state
+└── SessionProvider.tsx            # Client: next-auth SessionProvider wrapper
+
+app/api/auth/
+├── [...nextauth]/route.ts         # Auth.js GET/POST handlers
+├── register/route.ts              # Kayit endpoint (bcrypt hash, duplicate check)
+└── reset-password/route.ts        # Sifre sifirlama endpoint (placeholder)
 ```
 
-### 5.4 Rol Tabanli Erisim
+### 5.4 Admin Layout Auth Entegrasyonu
+
+```tsx
+// app/admin/layout.tsx
+const session = await auth();
+if (!session?.user) redirect('/giris');
+
+// SessionProvider ile client componentlere session verisi saglanir
+// TopBar: useSession() ile kullanici adi/email gosterir, cikis butonu
+// Sidebar: signOut() ile cikis butonu
+```
+
+### 5.5 Rol Tabanli Erisim
 
 - `ADMIN`: Tum admin paneline erisim, kullanici yonetimi
 - `STAFF`: Sinirli erisim (randevular, hastalar)
+- JWT callback'te `token.role`, session callback'te `session.user.role`
+
+### 5.6 Seed Script
+
+- Varsayilan admin kullanici: `admin@aestheticclinic.com` / `admin123`
+- `prisma/seed.ts` icinde bcrypt hash ile olusturulur
 
 ---
 

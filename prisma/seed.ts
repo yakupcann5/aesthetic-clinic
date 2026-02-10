@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 import { services } from '../lib/data/services';
 import { products } from '../lib/data/products';
 import { blogPosts } from '../lib/data/blog';
@@ -115,6 +116,21 @@ async function main() {
     },
   });
   console.log('  Site settings seeded');
+
+  // Seed Admin User
+  console.log('Seeding admin user...');
+  const passwordHash = await bcrypt.hash('admin123', 12);
+  await prisma.user.upsert({
+    where: { email: 'admin@aestheticclinic.com' },
+    update: {},
+    create: {
+      name: 'Admin',
+      email: 'admin@aestheticclinic.com',
+      passwordHash,
+      role: 'ADMIN',
+    },
+  });
+  console.log('  Admin user seeded (admin@aestheticclinic.com / admin123)');
 
   console.log('Seeding completed!');
 }
