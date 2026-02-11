@@ -4397,11 +4397,11 @@ Faz B1: Proje İskeleti (1 hafta)
 
 Faz B2: Multi-Tenant Altyapı (1 hafta)
 ├── TenantContext + TenantFilter (subdomain çözümleme)
-├── TenantInterceptor (INSERT/UPDATE/DELETE koruması)
+├── TenantEntityListener (INSERT/UPDATE/DELETE koruması)  # Bölüm 2.3'te yeniden adlandırıldı
 ├── TenantAspect (SELECT koruması — Hibernate Filter)
 ├── TenantAwareTaskDecorator (async propagation)
 ├── TenantAwareScheduler (scheduled task'lar)
-├── TenantAwareCacheKeyGenerator (Redis)
+├── TenantAwareCacheKeyGenerator (Caffeine local cache)  # Bölüm 9/13'te düzeltildi
 ├── Tenant CRUD + Onboarding akışı
 └── Tenant izolasyon testleri (cross-tenant saldırı testleri)
 
