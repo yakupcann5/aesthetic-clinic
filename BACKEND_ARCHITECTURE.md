@@ -8,8 +8,8 @@ Bu doküman, mevcut Next.js frontend'i destekleyecek **Kotlin + Spring Boot** ta
 
 | Katman | Teknoloji |
 |--------|-----------|
-| Dil | Kotlin 1.9+ |
-| Framework | Spring Boot 3.3+ |
+| Dil | Kotlin 2.0+ |
+| Framework | Spring Boot 3.4+ |
 | Veritabanı | MySQL 8.0+ |
 | ORM | Spring Data JPA + Hibernate 6 |
 | Güvenlik | Spring Security 6 + JWT (jjwt) |
@@ -491,20 +491,26 @@ aesthetic-saas-backend/
 │   │   │   │   ├── JwtConfig.kt                         # JWT token ayarları
 │   │   │   │   ├── WebConfig.kt                         # CORS, interceptors
 │   │   │   │   ├── CacheConfig.kt                       # Redis cache config
+│   │   │   │   ├── AsyncConfig.kt                       # Async executor + TenantAwareTaskDecorator
 │   │   │   │   ├── OpenApiConfig.kt                     # Swagger UI config
 │   │   │   │   └── FlywayConfig.kt                      # DB migration config
 │   │   │   │
 │   │   │   ├── tenant/                                  # Multi-tenant altyapısı
 │   │   │   │   ├── TenantContext.kt                     # ThreadLocal tenant holder
-│   │   │   │   ├── TenantFilter.kt                     # HTTP filter (subdomain → tenant)
+│   │   │   │   ├── TenantFilter.kt                     # HTTP filter (subdomain/custom domain → tenant)
 │   │   │   │   ├── TenantAspect.kt                     # Hibernate filter AOP
-│   │   │   │   ├── TenantAwareEntity.kt                # Base entity (tenant_id)
-│   │   │   │   └── TenantInterceptor.kt                # JPA interceptor (auto-set tenant_id)
+│   │   │   │   ├── TenantAwareEntity.kt                # Base entity (tenant_id + @EntityListeners)
+│   │   │   │   ├── TenantEntityListener.kt             # JPA Entity Listener (auto-set tenant_id)
+│   │   │   │   ├── TenantAwareTaskDecorator.kt         # Async thread'lere tenant context taşıma
+│   │   │   │   ├── TenantAwareScheduler.kt             # Scheduled task'lar için tenant iteration
+│   │   │   │   ├── TenantAwareCacheKeyGenerator.kt     # Redis cache key'lerine tenant prefix
+│   │   │   │   └── TenantCacheManager.kt               # Tenant-scoped cache eviction
 │   │   │   │
 │   │   │   ├── security/                                # Auth & güvenlik
 │   │   │   │   ├── JwtTokenProvider.kt                  # Token oluşturma/doğrulama
 │   │   │   │   ├── JwtAuthenticationFilter.kt           # Request filter
 │   │   │   │   ├── CustomUserDetailsService.kt          # UserDetails yükleme
+│   │   │   │   ├── RefreshToken.kt                      # Refresh token entity (revocation)
 │   │   │   │   └── SecurityExpressions.kt               # @PreAuthorize ifadeleri
 │   │   │   │
 │   │   │   ├── domain/                                  # JPA Entity'ler
@@ -512,7 +518,8 @@ aesthetic-saas-backend/
 │   │   │   │   │   └── Tenant.kt                        # Tenant (işletme) entity
 │   │   │   │   ├── user/
 │   │   │   │   │   ├── User.kt
-│   │   │   │   │   └── Role.kt                          # Enum: PLATFORM_ADMIN, TENANT_ADMIN, STAFF, CLIENT
+│   │   │   │   │   ├── Role.kt                          # Enum: PLATFORM_ADMIN, TENANT_ADMIN, STAFF, CLIENT
+│   │   │   │   │   └── ClientNote.kt                    # Müşteri notları (staff tarafından)
 │   │   │   │   ├── service/
 │   │   │   │   │   ├── Service.kt
 │   │   │   │   │   └── ServiceCategory.kt
@@ -524,9 +531,20 @@ aesthetic-saas-backend/
 │   │   │   │   │   └── GalleryItem.kt
 │   │   │   │   ├── appointment/
 │   │   │   │   │   ├── Appointment.kt
+│   │   │   │   │   ├── AppointmentService.kt            # Many-to-many pivot (appointment ↔ service)
 │   │   │   │   │   ├── AppointmentStatus.kt             # Enum
+│   │   │   │   │   ├── RecurringAppointment.kt          # Tekrarlayan randevu şablonu
 │   │   │   │   │   ├── TimeSlot.kt                      # Müsait zaman dilimi
 │   │   │   │   │   └── WorkingHours.kt                  # Çalışma saatleri
+│   │   │   │   ├── review/
+│   │   │   │   │   └── Review.kt                        # Müşteri değerlendirmeleri
+│   │   │   │   ├── payment/
+│   │   │   │   │   ├── Payment.kt                       # Ödeme kayıtları (iyzico)
+│   │   │   │   │   ├── Subscription.kt                  # Tenant abonelik yönetimi
+│   │   │   │   │   └── Invoice.kt                       # Fatura kayıtları
+│   │   │   │   ├── notification/
+│   │   │   │   │   ├── Notification.kt                  # Bildirim kayıtları
+│   │   │   │   │   └── NotificationTemplate.kt          # SMS/E-posta şablonları
 │   │   │   │   ├── contact/
 │   │   │   │   │   └── ContactMessage.kt
 │   │   │   │   └── settings/
@@ -540,10 +558,15 @@ aesthetic-saas-backend/
 │   │   │   │   ├── BlogPostRepository.kt
 │   │   │   │   ├── GalleryItemRepository.kt
 │   │   │   │   ├── AppointmentRepository.kt
+│   │   │   │   ├── ReviewRepository.kt
+│   │   │   │   ├── PaymentRepository.kt
+│   │   │   │   ├── SubscriptionRepository.kt
+│   │   │   │   ├── NotificationRepository.kt
+│   │   │   │   ├── RefreshTokenRepository.kt
 │   │   │   │   ├── ContactMessageRepository.kt
 │   │   │   │   └── SiteSettingsRepository.kt
 │   │   │   │
-│   │   │   ├── service/                                 # İş mantığı (Business Logic)
+│   │   │   ├── usecase/                                 # İş mantığı (Business Logic)
 │   │   │   │   ├── TenantService.kt                     # Tenant CRUD + onboarding
 │   │   │   │   ├── AuthService.kt                       # Login, register, token refresh
 │   │   │   │   ├── UserService.kt                       # Kullanıcı yönetimi
@@ -553,10 +576,13 @@ aesthetic-saas-backend/
 │   │   │   │   ├── GalleryService.kt                    # Galeri CRUD
 │   │   │   │   ├── AppointmentService.kt                # Randevu: oluştur, iptal, tamamla
 │   │   │   │   ├── AvailabilityService.kt               # Müsait slot hesaplama
+│   │   │   │   ├── ReviewService.kt                     # Değerlendirme CRUD
+│   │   │   │   ├── PaymentService.kt                    # Ödeme işlemleri (iyzico)
+│   │   │   │   ├── SubscriptionService.kt               # Abonelik yönetimi
 │   │   │   │   ├── ContactService.kt                    # İletişim mesajları
 │   │   │   │   ├── SettingsService.kt                   # Site ayarları
 │   │   │   │   ├── FileUploadService.kt                 # Görsel yükleme (S3/MinIO)
-│   │   │   │   └── NotificationService.kt               # E-posta + SMS bildirimleri
+│   │   │   │   └── NotificationService.kt               # E-posta (SendGrid) + SMS (Netgsm)
 │   │   │   │
 │   │   │   ├── controller/                              # REST API Controller'lar
 │   │   │   │   ├── AuthController.kt                    # /api/auth/**
@@ -567,6 +593,8 @@ aesthetic-saas-backend/
 │   │   │   │   ├── GalleryController.kt                 # /api/gallery/**
 │   │   │   │   ├── AppointmentController.kt             # /api/appointments/**
 │   │   │   │   ├── AvailabilityController.kt            # /api/availability/**
+│   │   │   │   ├── ReviewController.kt                  # /api/reviews/**
+│   │   │   │   ├── PaymentController.kt                 # /api/payments/** + iyzico webhook
 │   │   │   │   ├── ContactController.kt                 # /api/contact/**
 │   │   │   │   ├── SettingsController.kt                # /api/settings/**
 │   │   │   │   ├── FileUploadController.kt              # /api/upload/**
@@ -584,6 +612,7 @@ aesthetic-saas-backend/
 │   │   │   │   │   ├── UpdateBlogPostRequest.kt
 │   │   │   │   │   ├── CreateAppointmentRequest.kt
 │   │   │   │   │   ├── UpdateAppointmentStatusRequest.kt
+│   │   │   │   │   ├── CreateReviewRequest.kt
 │   │   │   │   │   ├── CreateContactMessageRequest.kt
 │   │   │   │   │   ├── UpdateSiteSettingsRequest.kt
 │   │   │   │   │   └── CreateTenantRequest.kt
@@ -596,6 +625,8 @@ aesthetic-saas-backend/
 │   │   │   │       ├── BlogPostResponse.kt
 │   │   │   │       ├── AppointmentResponse.kt
 │   │   │   │       ├── AvailabilityResponse.kt          # Müsait slotlar
+│   │   │   │       ├── ReviewResponse.kt
+│   │   │   │       ├── PaymentResponse.kt
 │   │   │   │       └── DashboardStatsResponse.kt
 │   │   │   │
 │   │   │   ├── mapper/                                  # Entity ↔ DTO dönüşümleri
@@ -603,7 +634,13 @@ aesthetic-saas-backend/
 │   │   │   │   ├── ProductMapper.kt
 │   │   │   │   ├── BlogPostMapper.kt
 │   │   │   │   ├── AppointmentMapper.kt
+│   │   │   │   ├── ReviewMapper.kt
 │   │   │   │   └── UserMapper.kt
+│   │   │   │
+│   │   │   ├── job/                                     # Scheduled Jobs
+│   │   │   │   ├── AppointmentReminderJob.kt            # Randevu hatırlatıcı
+│   │   │   │   ├── TrialExpirationJob.kt                # Deneme süresi kontrolü
+│   │   │   │   └── StaleDataCleanupJob.kt               # Eski veri temizliği
 │   │   │   │
 │   │   │   └── exception/                               # Hata yönetimi
 │   │   │       ├── GlobalExceptionHandler.kt            # @RestControllerAdvice
@@ -611,6 +648,7 @@ aesthetic-saas-backend/
 │   │   │       ├── ResourceNotFoundException.kt
 │   │   │       ├── DuplicateResourceException.kt
 │   │   │       ├── AppointmentConflictException.kt
+│   │   │       ├── PaymentException.kt
 │   │   │       └── UnauthorizedException.kt
 │   │   │
 │   │   └── resources/
@@ -626,16 +664,22 @@ aesthetic-saas-backend/
 │   │           ├── V6__create_gallery_table.sql
 │   │           ├── V7__create_appointment_tables.sql
 │   │           ├── V8__create_contact_table.sql
-│   │           └── V9__create_settings_table.sql
+│   │           ├── V9__create_settings_table.sql
+│   │           ├── V10__create_review_table.sql
+│   │           ├── V11__create_refresh_token_table.sql
+│   │           ├── V12__create_payment_tables.sql
+│   │           └── V13__create_notification_tables.sql
 │   │
 │   └── test/
 │       └── kotlin/com/aesthetic/backend/
-│           ├── service/
+│           ├── usecase/
 │           │   ├── AppointmentServiceTest.kt            # Randevu iş mantığı testleri
-│           │   └── AvailabilityServiceTest.kt           # Müsaitlik testleri
+│           │   ├── AvailabilityServiceTest.kt           # Müsaitlik testleri
+│           │   └── PaymentServiceTest.kt                # Ödeme iş mantığı testleri
 │           ├── controller/
 │           │   ├── AppointmentControllerTest.kt         # API entegrasyon testleri
-│           │   └── AuthControllerTest.kt
+│           │   ├── AuthControllerTest.kt
+│           │   └── PaymentControllerTest.kt             # Ödeme API testleri
 │           ├── repository/
 │           │   └── AppointmentRepositoryTest.kt         # DB testleri (Testcontainers)
 │           └── tenant/
