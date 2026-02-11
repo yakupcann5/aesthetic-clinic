@@ -2456,47 +2456,124 @@ class ServiceController(private val serviceService: ServiceManagementService) {
 ### 8.1 ER Diyagramı (İlişkiler)
 
 ```
-┌──────────┐       ┌──────────┐       ┌──────────────┐
-│ tenants  │───1:N─│  users   │───1:N─│ appointments │
-└──────────┘       └──────────┘       └──────────────┘
-     │                  │                     │
-     │ 1:N              │                     │ N:1
-     ▼                  │                     ▼
-┌──────────┐            │              ┌──────────┐
-│ services │────────────┘              │ services │
-└──────────┘                           └──────────┘
-     │
-     │ (tenant_id FK)
-     │
-┌──────────┐  ┌──────────────┐  ┌───────────────┐  ┌───────────────┐
-│ products │  │ blog_posts   │  │ gallery_items │  │ contact_msgs  │
-└──────────┘  └──────────────┘  └───────────────┘  └───────────────┘
-     │              │                   │                   │
-     └──────────────┴───────────────────┴───────────────────┘
-                    Hepsi tenant_id ile filtrelenir
+                              ┌─────────────┐
+                              │   tenants   │  (root — tenant_id FK olmaz)
+                              └──────┬──────┘
+                                     │ 1:N (tüm alt tablolar tenant_id ile bağlı)
+          ┌──────────────────────────┼──────────────────────────┐
+          ▼                          ▼                          ▼
+   ┌──────────┐              ┌──────────────┐           ┌──────────────┐
+   │  users   │              │   services   │           │   products   │
+   └────┬─────┘              └──────┬───────┘           └──────────────┘
+        │                           │
+        │ 1:N                       │ N:1
+        ▼                           ▼
+ ┌─────────────┐         ┌───────────────────┐
+ │ client_notes│         │service_categories │
+ └─────────────┘         └───────────────────┘
+
+   users ───1:N(staff)──→ appointments ←──N:M──→ services
+   users ───1:N(client)─→ appointments          (pivot: appointment_services)
+                               │
+                          ┌────┴────┐
+                          ▼         ▼
+                    ┌─────────┐ ┌──────────────────┐
+                    │ reviews │ │appointment_services│
+                    └─────────┘ └──────────────────┘
+
+   ┌────────────┐  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+   │ blog_posts │  │ gallery_items │  │contact_messages│  │ site_settings │
+   └────────────┘  └───────────────┘  └───────────────┘  └───────────────┘
+
+   ┌───────────────┐  ┌──────────────┐  ┌──────────────┐
+   │working_hours  │  │blocked_time_ │  │refresh_tokens│
+   │(staff + genel)│  │   slots      │  │(per user)    │
+   └───────────────┘  └──────────────┘  └──────────────┘
+
+   ┌──────────┐  ┌──────────────┐  ┌───────────────┐  ┌──────────────────┐
+   │ payments │  │subscriptions │  │   invoices    │  │  notifications   │
+   │ (iyzico) │  │(per tenant)  │  │(per payment)  │  │notification_tmpls│
+   └──────────┘  └──────────────┘  └───────────────┘  └──────────────────┘
+
+   İlişki özeti:
+   • tenants 1:N → users, services, products, blog_posts, gallery_items, ...
+   • users   1:N → appointments (staff), appointments (client), reviews, client_notes
+   • services N:1 → service_categories
+   • appointments N:M → services (pivot: appointment_services)
+   • appointments 1:1 → reviews
+   • tenants 1:1 → subscriptions, site_settings
+   • Tüm tenant-scoped tablolar: tenant_id sütunu + Hibernate @Filter
 ```
 
 ### 8.2 Kritik Indexler
 
 ```sql
--- Randevu çakışma sorgularını hızlandırmak için
+-- ═══════════════════════════════════════════════════
+-- RANDEVU SİSTEMİ
+-- ═══════════════════════════════════════════════════
+
+-- Çakışma sorgularını hızlandırmak için (PESSIMISTIC_WRITE ile kullanılır)
 CREATE INDEX idx_appt_conflict
     ON appointments(tenant_id, staff_id, date, start_time, end_time, status);
 
--- Tenant çözümleme
-CREATE UNIQUE INDEX idx_tenant_slug ON tenants(slug);
-CREATE UNIQUE INDEX idx_tenant_domain ON tenants(domain) WHERE domain IS NOT NULL;
+-- Müşteri randevu geçmişi
+CREATE INDEX idx_appt_client ON appointments(tenant_id, client_id);
 
--- Kullanıcı araması
+-- ═══════════════════════════════════════════════════
+-- TENANT ÇÖZÜMLEME
+-- ═══════════════════════════════════════════════════
+
+CREATE UNIQUE INDEX idx_tenant_slug ON tenants(slug);
+-- NOT: MySQL partial index desteklemez! NULL custom_domain'ler unique constraint'ten
+-- otomatik hariç tutulur (MySQL'de NULL != NULL). Bu yüzden basit UNIQUE yeterlidir.
+CREATE UNIQUE INDEX idx_tenant_custom_domain ON tenants(custom_domain);
+
+-- ═══════════════════════════════════════════════════
+-- KULLANICI + AUTH
+-- ═══════════════════════════════════════════════════
+
 CREATE UNIQUE INDEX idx_user_email_tenant ON users(email, tenant_id);
 
--- Blog/hizmet SEO slug'ları
+-- Refresh token sorguları
+CREATE INDEX idx_rt_user ON refresh_tokens(user_id);
+CREATE INDEX idx_rt_family ON refresh_tokens(family);
+CREATE INDEX idx_rt_expires ON refresh_tokens(expires_at);
+
+-- ═══════════════════════════════════════════════════
+-- SEO SLUG'LAR (tenant bazlı unique)
+-- ═══════════════════════════════════════════════════
+
 CREATE UNIQUE INDEX idx_service_slug_tenant ON services(slug, tenant_id);
+CREATE UNIQUE INDEX idx_category_slug_tenant ON service_categories(slug, tenant_id);
 CREATE UNIQUE INDEX idx_product_slug_tenant ON products(slug, tenant_id);
 CREATE UNIQUE INDEX idx_blog_slug_tenant ON blog_posts(slug, tenant_id);
+
+-- ═══════════════════════════════════════════════════
+-- YENİ ENTITY'LER
+-- ═══════════════════════════════════════════════════
+
+-- Review sorguları
+CREATE INDEX idx_review_service ON reviews(tenant_id, service_id);
+CREATE INDEX idx_review_staff ON reviews(tenant_id, staff_id);
+
+-- Payment sorguları
+CREATE INDEX idx_payment_tenant ON payments(tenant_id, status);
+CREATE INDEX idx_subscription_tenant ON subscriptions(tenant_id);
+
+-- Çalışma saatleri + bloklanmış slotlar
+CREATE UNIQUE INDEX uk_working_hours ON working_hours(tenant_id, staff_id, day_of_week);
+CREATE INDEX idx_blocked_slot ON blocked_time_slots(tenant_id, staff_id, date);
 ```
 
-### 8.3 Flyway Migration Örneği
+### 8.3 Flyway Migration Örnekleri
+
+> **Collation NOTU:** Tüm tablolarda `utf8mb4_turkish_ci` kullanılır. Bu sayede Türkçe
+> karakterler (İ, ı, Ş, ş, Ö, ö, Ü, ü, Ç, ç, Ğ, ğ) doğru sıralanır ve aranır.
+
+> **FK ON DELETE stratejisi:**
+> - `ON DELETE CASCADE` → Alt kayıt otomatik silinir (tenant silinince tüm verileri silinir)
+> - `ON DELETE SET NULL` → FK null yapılır (staff silinince randevudaki staff_id null olur)
+> - `ON DELETE RESTRICT` → Silmeyi engeller (referans varsa silme yapılamaz)
 
 ```sql
 -- V1__create_tenant_table.sql
@@ -2509,12 +2586,30 @@ CREATE TABLE tenants (
     email VARCHAR(255) DEFAULT '',
     address TEXT DEFAULT '',
     logo_url VARCHAR(500),
-    domain VARCHAR(255),
+    custom_domain VARCHAR(255) UNIQUE,           -- DÜZELTME: domain → custom_domain
     plan ENUM('TRIAL','BASIC','PROFESSIONAL','ENTERPRISE') DEFAULT 'TRIAL',
+    trial_end_date DATE,                         -- DÜZELTME: Eksik alan eklendi
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+-- V3__create_service_tables.sql
+CREATE TABLE service_categories (                -- DÜZELTME: Eksik tablo eklendi
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    slug VARCHAR(100) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    image VARCHAR(500),
+    sort_order INT DEFAULT 0,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    UNIQUE KEY uk_category_slug_tenant (slug, tenant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
 
 -- V7__create_appointment_tables.sql
 CREATE TABLE appointments (
@@ -2524,27 +2619,51 @@ CREATE TABLE appointments (
     client_name VARCHAR(255) NOT NULL,
     client_email VARCHAR(255) NOT NULL,
     client_phone VARCHAR(20) NOT NULL,
-    service_id VARCHAR(36) NOT NULL,
+    primary_service_id VARCHAR(36),              -- DÜZELTME: service_id → primary_service_id
     staff_id VARCHAR(36),
     date DATE NOT NULL,
     start_time TIME NOT NULL,
     end_time TIME NOT NULL,
+    total_duration_minutes INT DEFAULT 0,        -- DÜZELTME: Eksik alanlar eklendi
+    total_price DECIMAL(10,2) DEFAULT 0.00,
     notes TEXT,
     status ENUM('PENDING','CONFIRMED','IN_PROGRESS','COMPLETED','CANCELLED','NO_SHOW')
         DEFAULT 'PENDING',
     cancelled_at TIMESTAMP NULL,
     cancellation_reason VARCHAR(500),
-    version BIGINT DEFAULT 0,
+    recurring_group_id VARCHAR(36),              -- Tekrarlayan randevu grubu
+    recurrence_rule VARCHAR(20),                 -- WEEKLY, BIWEEKLY, MONTHLY
+    reminder_24h_sent BOOLEAN DEFAULT FALSE,     -- Hatırlatıcı durumları
+    reminder_1h_sent BOOLEAN DEFAULT FALSE,
+    version BIGINT DEFAULT 0,                    -- Optimistic locking
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
-    FOREIGN KEY (tenant_id) REFERENCES tenants(id),
-    FOREIGN KEY (client_id) REFERENCES users(id),
-    FOREIGN KEY (service_id) REFERENCES services(id),
-    FOREIGN KEY (staff_id) REFERENCES users(id),
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    FOREIGN KEY (client_id) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (primary_service_id) REFERENCES services(id) ON DELETE SET NULL,
+    FOREIGN KEY (staff_id) REFERENCES users(id) ON DELETE SET NULL,
 
-    INDEX idx_appt_conflict (tenant_id, staff_id, date, start_time, end_time, status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    INDEX idx_appt_conflict (tenant_id, staff_id, date, start_time, end_time, status),
+    INDEX idx_appt_client (tenant_id, client_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+-- Pivot tablo: Randevu ↔ Hizmet (çoklu hizmet desteği)
+CREATE TABLE appointment_services (              -- DÜZELTME: Eksik pivot tablo eklendi
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    appointment_id VARCHAR(36) NOT NULL,
+    service_id VARCHAR(36) NOT NULL,
+    price DECIMAL(10,2) DEFAULT 0.00,            -- Randevu anındaki fiyat snapshot
+    duration_minutes INT DEFAULT 0,
+    sort_order INT DEFAULT 0,
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE,
+    FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE RESTRICT,
+
+    INDEX idx_appt_svc (appointment_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
 
 CREATE TABLE working_hours (
     id VARCHAR(36) NOT NULL PRIMARY KEY,
@@ -2557,11 +2676,11 @@ CREATE TABLE working_hours (
     break_end_time TIME,
     is_working_day BOOLEAN DEFAULT TRUE,
 
-    FOREIGN KEY (tenant_id) REFERENCES tenants(id),
-    FOREIGN KEY (staff_id) REFERENCES users(id),
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    FOREIGN KEY (staff_id) REFERENCES users(id) ON DELETE CASCADE,
 
     UNIQUE KEY uk_working_hours (tenant_id, staff_id, day_of_week)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
 
 CREATE TABLE blocked_time_slots (
     id VARCHAR(36) NOT NULL PRIMARY KEY,
@@ -2572,11 +2691,71 @@ CREATE TABLE blocked_time_slots (
     end_time TIME NOT NULL,
     reason VARCHAR(500),
 
-    FOREIGN KEY (tenant_id) REFERENCES tenants(id),
-    FOREIGN KEY (staff_id) REFERENCES users(id),
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    FOREIGN KEY (staff_id) REFERENCES users(id) ON DELETE CASCADE,
 
     INDEX idx_blocked_slot (tenant_id, staff_id, date)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+-- V10__create_review_table.sql
+CREATE TABLE reviews (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    appointment_id VARCHAR(36),
+    client_id VARCHAR(36) NOT NULL,
+    service_id VARCHAR(36),
+    staff_id VARCHAR(36),
+    rating INT NOT NULL DEFAULT 0,
+    comment TEXT,
+    is_approved BOOLEAN DEFAULT FALSE,
+    is_public BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE SET NULL,
+    FOREIGN KEY (client_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE SET NULL,
+    FOREIGN KEY (staff_id) REFERENCES users(id) ON DELETE SET NULL,
+
+    INDEX idx_review_service (tenant_id, service_id),
+    INDEX idx_review_staff (tenant_id, staff_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+-- V11__create_refresh_token_table.sql
+CREATE TABLE refresh_tokens (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,         -- JWT jti claim
+    user_id VARCHAR(36) NOT NULL,
+    tenant_id VARCHAR(36) NOT NULL,
+    family VARCHAR(36) NOT NULL,                 -- Token ailesi (theft detection)
+    expires_at TIMESTAMP NOT NULL,
+    is_revoked BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+
+    INDEX idx_rt_user (user_id),
+    INDEX idx_rt_family (family),
+    INDEX idx_rt_expires (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+-- V12__create_payment_tables.sql ve V13__create_notification_tables.sql
+-- → Bölüm 17 (Payments) ve Bölüm 18 (Notifications) bölümlerinde detaylandırılmıştır.
+
+-- V14__create_client_notes_table.sql
+CREATE TABLE client_notes (                      -- DÜZELTME: Eksik tablo eklendi
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    client_id VARCHAR(36) NOT NULL,
+    author_id VARCHAR(36) NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    FOREIGN KEY (client_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE,
+
+    INDEX idx_client_notes (tenant_id, client_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
 ```
 
 ---
