@@ -3416,38 +3416,42 @@ Tenant'ların plan bazlı ödeme yapabilmesi için. Türkiye pazarı için **iyz
 ```kotlin
 @Entity
 @Table(name = "subscriptions")
-class Subscription {
+class Subscription : TenantAwareEntity() {             // DÜZELTME: TenantAwareEntity extend
     @Id @GeneratedValue(strategy = GenerationType.UUID)
     val id: String? = null
-    val tenantId: String = ""
+    // tenantId → TenantAwareEntity'den miras alınır
 
     @Enumerated(EnumType.STRING)
     var plan: SubscriptionPlan = SubscriptionPlan.TRIAL
 
+    // Not: startDate/endDate service katmanında set edilmeli,
+    // entity default'ları sadece constructor zamanı çalışır.
     var startDate: LocalDate = LocalDate.now()
-    var endDate: LocalDate = LocalDate.now().plusDays(14)  // Trial: 14 gün
-    var isActive: Boolean = true
+    var endDate: LocalDate = LocalDate.now().plusDays(14)
     var autoRenew: Boolean = true
 
-    // Plan limitleri
+    // Plan limitleri (plan seçimi sırasında service tarafından set edilir)
     var maxStaff: Int = 1                 // TRIAL: 1, BASIC: 3, PRO: 10, ENT: sınırsız
     var maxAppointmentsPerMonth: Int = 50 // TRIAL: 50, BASIC: 200, PRO: 1000, ENT: sınırsız
     var maxStorageMb: Int = 100           // Dosya yükleme limiti
 
     @Enumerated(EnumType.STRING)
     var status: SubscriptionStatus = SubscriptionStatus.ACTIVE
+    // DÜZELTME: isActive kaldırıldı — status == ACTIVE ile kontrol edilir
 
-    @CreationTimestamp val createdAt: LocalDateTime? = null
-    @UpdateTimestamp var updatedAt: LocalDateTime? = null
+    @CreationTimestamp val createdAt: Instant? = null   // DÜZELTME: LocalDateTime → Instant (UTC)
+    @UpdateTimestamp var updatedAt: Instant? = null
 }
 
 @Entity
 @Table(name = "payments")
-class Payment {
+class Payment : TenantAwareEntity() {                   // DÜZELTME: TenantAwareEntity extend
     @Id @GeneratedValue(strategy = GenerationType.UUID)
     val id: String? = null
-    val tenantId: String = ""
-    val subscriptionId: String? = null
+
+    @ManyToOne(fetch = FetchType.LAZY)                  // DÜZELTME: String → JPA ilişki
+    @JoinColumn(name = "subscription_id")
+    var subscription: Subscription? = null
 
     @Column(precision = 10, scale = 2)
     var amount: BigDecimal = BigDecimal.ZERO
@@ -3456,23 +3460,26 @@ class Payment {
     @Enumerated(EnumType.STRING)
     var status: PaymentStatus = PaymentStatus.PENDING
 
-    var provider: String = "iyzico"           // "iyzico" | "stripe"
-    var providerPaymentId: String? = null      // iyzico/stripe payment ID
-    var providerSubscriptionId: String? = null // Tekrarlayan ödeme ID
+    @Enumerated(EnumType.STRING)                        // DÜZELTME: String → enum
+    var provider: PaymentProvider = PaymentProvider.IYZICO
+    var providerPaymentId: String? = null                // iyzico/stripe payment ID
+    var providerSubscriptionId: String? = null           // Tekrarlayan ödeme ID
 
     var failureReason: String? = null
-    var paidAt: LocalDateTime? = null
+    var paidAt: Instant? = null                          // DÜZELTME: LocalDateTime → Instant
 
-    @CreationTimestamp val createdAt: LocalDateTime? = null
+    @CreationTimestamp val createdAt: Instant? = null    // DÜZELTME: LocalDateTime → Instant
 }
 
 @Entity
 @Table(name = "invoices")
-class Invoice {
+class Invoice : TenantAwareEntity() {                   // DÜZELTME: TenantAwareEntity extend
     @Id @GeneratedValue(strategy = GenerationType.UUID)
     val id: String? = null
-    val tenantId: String = ""
-    val paymentId: String? = null
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "payment_id")
+    var payment: Payment? = null
 
     var invoiceNumber: String = ""            // "INV-2026-0001"
     @Column(precision = 10, scale = 2)
@@ -3486,11 +3493,12 @@ class Invoice {
     var billingAddress: String = ""
     var taxId: String? = null                 // Vergi numarası
 
-    @CreationTimestamp val createdAt: LocalDateTime? = null
+    @CreationTimestamp val createdAt: Instant? = null    // DÜZELTME: LocalDateTime → Instant
 }
 
 enum class SubscriptionStatus { ACTIVE, PAST_DUE, CANCELLED, EXPIRED }
 enum class PaymentStatus { PENDING, COMPLETED, FAILED, REFUNDED }
+enum class PaymentProvider { IYZICO, STRIPE }            // DÜZELTME: String yerine enum
 ```
 
 ### 17.2 Plan Limitleri Kontrolü
@@ -3500,7 +3508,8 @@ enum class PaymentStatus { PENDING, COMPLETED, FAILED, REFUNDED }
 class PlanLimitService(
     private val subscriptionRepository: SubscriptionRepository,
     private val userRepository: UserRepository,
-    private val appointmentRepository: AppointmentRepository
+    private val appointmentRepository: AppointmentRepository,
+    private val siteSettingsRepository: SiteSettingsRepository   // DÜZELTME: Tenant timezone için
 ) {
     fun checkCanAddStaff(tenantId: String) {
         val subscription = getActiveSubscription(tenantId)
@@ -3515,8 +3524,17 @@ class PlanLimitService(
 
     fun checkCanCreateAppointment(tenantId: String) {
         val subscription = getActiveSubscription(tenantId)
+
+        // DÜZELTME: Tenant timezone ile ayın başını hesapla
+        val settings = siteSettingsRepository.findByTenantId(tenantId)
+        val tenantZone = ZoneId.of(settings?.timezone ?: "Europe/Istanbul")
+        val monthStart = ZonedDateTime.now(tenantZone)
+            .withDayOfMonth(1)
+            .toLocalDate()
+            .atStartOfDay()                                      // 00:00:00 (saat sıfırla)
+
         val monthlyCount = appointmentRepository.countByTenantIdAndCreatedAtAfter(
-            tenantId, LocalDateTime.now().withDayOfMonth(1)
+            tenantId, monthStart
         )
         if (monthlyCount >= subscription.maxAppointmentsPerMonth) {
             throw PlanLimitExceededException(
@@ -3533,13 +3551,14 @@ class PlanLimitService(
 ```kotlin
 // API Endpoint'leri:
 // POST /api/admin/billing/subscribe         → Plan seçimi + ödeme başlatma
-// POST /api/admin/billing/webhook           → iyzico callback (ödeme sonucu)
+// POST /api/webhooks/iyzico                 → iyzico callback (auth YOK — dış servis erişir)
+//                                              DÜZELTME: /api/admin/ altından çıkarıldı
 // GET  /api/admin/billing/invoices          → Fatura listesi
 // GET  /api/admin/billing/current-plan      → Mevcut plan + kullanım istatistikleri
 // POST /api/admin/billing/cancel            → Abonelik iptali
 // POST /api/admin/billing/upgrade           → Plan yükseltme
 
-// build.gradle.kts'e ekle:
+// Not: iyzico dependency zaten build.gradle.kts'te mevcut (Bölüm 9.2)
 // implementation("com.iyzipay:iyzipay-java:2.0.131")
 ```
 
