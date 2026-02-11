@@ -2770,7 +2770,8 @@ spring:
     name: aesthetic-saas-backend
 
   datasource:
-    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:aesthetic_saas}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Europe/Istanbul
+    # DB sütunları UTC saklar — tenant timezone dönüşümü uygulama katmanında yapılır
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:aesthetic_saas}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
     username: ${DB_USERNAME:root}
     password: ${DB_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -2796,6 +2797,19 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
 
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000               # Connection timeout (ms)
+
+  cache:
+    type: caffeine                # Local cache (tenant resolution, entity cache)
+    caffeine:
+      spec: maximumSize=1000,expireAfterWrite=300s
+    cache-names: services,products,blog,gallery,tenants
+
   servlet:
     multipart:
       max-file-size: 10MB
@@ -2804,11 +2818,11 @@ spring:
   jackson:
     serialization:
       write-dates-as-timestamps: false
-    time-zone: Europe/Istanbul
+    time-zone: UTC              # API yanıtları UTC — tenant timezone uygulama katmanında yönetilir
 
 # JWT
 jwt:
-  secret: ${JWT_SECRET:my-super-secret-key-that-should-be-at-least-256-bits}
+  secret: ${JWT_SECRET}                   # Zorunlu! Min 256-bit key. Güvenlik için default yok.
   access-token-expiration: 900000       # 15 dakika (ms)
   refresh-token-expiration: 604800000   # 7 gün (ms)
 
@@ -2828,8 +2842,9 @@ logging:
   level:
     root: INFO
     com.aesthetic.backend: DEBUG
-    org.hibernate.SQL: DEBUG
-    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+    # Hibernate SQL logları — sadece application-dev.yml'de aktif edin:
+    # org.hibernate.SQL: DEBUG
+    # org.hibernate.orm.jdbc.bind: TRACE     # Hibernate 6'da BasicBinder yerine orm.jdbc.bind
 
 server:
   port: ${SERVER_PORT:8080}
@@ -2839,11 +2854,11 @@ server:
 
 ```kotlin
 plugins {
-    kotlin("jvm") version "1.9.25"
-    kotlin("plugin.spring") version "1.9.25"
-    kotlin("plugin.jpa") version "1.9.25"
-    id("org.springframework.boot") version "3.3.5"
-    id("io.spring.dependency-management") version "1.1.6"
+    kotlin("jvm") version "2.0.21"
+    kotlin("plugin.spring") version "2.0.21"
+    kotlin("plugin.jpa") version "2.0.21"
+    id("org.springframework.boot") version "3.4.1"
+    id("io.spring.dependency-management") version "1.1.7"
 }
 
 group = "com.aesthetic"
@@ -2881,21 +2896,27 @@ dependencies {
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
 
-    // Password Hashing
-    implementation("org.springframework.security:spring-security-crypto")
+    // Password Hashing — spring-boot-starter-security içinde BCryptPasswordEncoder zaten mevcut
 
     // OpenAPI / Swagger
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.6.0")
 
-    // Redis (cache + rate limiting)
+    // File Upload (MIME type detection — Bölüm 7.5'te Tika().detect() kullanılıyor)
+    implementation("org.apache.tika:tika-core:3.0.0")
+
+    // Redis (rate limiting + distributed cache)
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
+
+    // Cache (Caffeine local cache — tenant resolution, entity cache)
+    implementation("org.springframework.boot:spring-boot-starter-cache")
+    implementation("com.github.ben-manes.caffeine:caffeine:3.1.8")
 
     // Rate Limiting
     implementation("com.bucket4j:bucket4j-core:8.10.1")
 
-    // Retry
+    // Retry (@EnableRetry — AOP starter gerekli)
     implementation("org.springframework.retry:spring-retry")
-    implementation("org.springframework:spring-aspects")
+    implementation("org.springframework.boot:spring-boot-starter-aop")
 
     // iyzico (Türkiye ödeme)
     implementation("com.iyzipay:iyzipay-java:2.0.131")
@@ -2910,6 +2931,13 @@ dependencies {
     testImplementation("org.testcontainers:testcontainers:1.20.3")
     testImplementation("org.testcontainers:mysql:1.20.3")
     testImplementation("org.testcontainers:junit-jupiter:1.20.3")
+}
+
+kotlin {
+    compilerOptions {
+        freeCompilerArgs.addAll("-Xjsr305=strict")    // Spring null-safety desteği
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
+    }
 }
 
 allOpen {
