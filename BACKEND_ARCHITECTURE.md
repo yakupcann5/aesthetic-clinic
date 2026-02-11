@@ -4303,7 +4303,10 @@ class CorrelationIdFilter : OncePerRequestFilter() {
         try {
             filterChain.doFilter(request, response)
         } finally {
-            MDC.clear()
+            // DÜZELTME: MDC.clear() tüm key'leri siler (TenantFilter'ınkileri de!)
+            // Sadece bu filter'ın eklediği key'leri temizle
+            MDC.remove("correlationId")
+            // tenantId → TenantFilter tarafından yönetilir, burada silme
         }
     }
 }
@@ -4315,7 +4318,7 @@ class CorrelationIdFilter : OncePerRequestFilter() {
 ### 25.3 Error Tracking (Sentry)
 
 ```kotlin
-// build.gradle.kts'e ekle:
+// Not: Sentry dependency zaten build.gradle.kts'te mevcut (Bölüm 9.2)
 // implementation("io.sentry:sentry-spring-boot-starter-jakarta:7.14.0")
 
 // application.yml:
