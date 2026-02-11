@@ -118,6 +118,7 @@ class TenantFilter(
     )
     private val prefixExemptPaths = listOf(
         "/api/platform/",
+        "/api/webhooks/",           // Dış servis callback (iyzico vb.) — tenant gerektirmez
         "/swagger-ui/",
         "/v3/api-docs",
         "/actuator/"
@@ -362,6 +363,9 @@ class TenantAwareTaskDecorator : TaskDecorator {
 // AsyncConfig.kt — Async executor konfigürasyonu
 @Configuration
 @EnableAsync
+@EnableCaching                 // Caffeine local cache aktif
+@EnableScheduling              // @Scheduled job'lar aktif (Bölüm 18-19)
+@EnableRetry                   // @Retryable (bildirim gönderimi vb.)
 class AsyncConfig {
     @Bean("taskExecutor")
     fun taskExecutor(): TaskExecutor {
@@ -668,7 +672,10 @@ aesthetic-saas-backend/
 │   │           ├── V10__create_review_table.sql
 │   │           ├── V11__create_refresh_token_table.sql
 │   │           ├── V12__create_payment_tables.sql
-│   │           └── V13__create_notification_tables.sql
+│   │           ├── V13__create_notification_tables.sql
+│   │           ├── V14__create_client_notes_table.sql
+│   │           ├── V15__create_audit_log_table.sql
+│   │           └── V16__create_consent_records_table.sql
 │   │
 │   └── test/
 │       └── kotlin/com/aesthetic/backend/
@@ -1694,6 +1701,86 @@ interface AppointmentRepository : JpaRepository<Appointment, String> {
 }
 ```
 
+### 5.3.1 Diğer Repository Interface'leri
+
+Kod genelinde çağrılan tüm Spring Data JPA repository metodları. Derived query method convention'ı ile otomatik SQL üretilir:
+
+```kotlin
+@Repository
+interface SubscriptionRepository : JpaRepository<Subscription, String> {
+    fun findByTenantIdAndStatus(tenantId: String, status: SubscriptionStatus): Subscription?
+}
+
+@Repository
+interface UserRepository : JpaRepository<User, String> {
+    fun findByEmailAndTenantId(email: String, tenantId: String): User?
+    fun findByTenantIdAndRoleInAndIsActiveTrue(tenantId: String, roles: List<Role>): List<User>
+    fun countByTenantIdAndRole(tenantId: String, role: Role): Long
+}
+
+@Repository
+interface AppointmentRepository : JpaRepository<Appointment, String> {
+    // ... (Bölüm 5.3'teki pessimistic lock query'leri ek olarak)
+    fun countByTenantIdAndCreatedAtAfter(tenantId: String, after: LocalDateTime): Long
+
+    @Query("""
+        SELECT a FROM Appointment a
+        WHERE a.date = :date AND a.startTime <= :time
+        AND a.status = 'CONFIRMED'
+        AND (:reminder24hSent IS NULL OR a.reminder24hSent = :reminder24hSent)
+        AND (:reminder1hSent IS NULL OR a.reminder1hSent = :reminder1hSent)
+    """)
+    fun findUpcomingNotReminded(
+        @Param("date") date: LocalDate,
+        @Param("time") time: LocalTime,
+        @Param("reminder24hSent") reminder24hSent: Boolean? = null,
+        @Param("reminder1hSent") reminder1hSent: Boolean? = null
+    ): List<Appointment>
+
+    @Query("""
+        SELECT a FROM Appointment a
+        WHERE a.status = 'COMPLETED'
+        AND a.updatedAt >= :since
+        AND NOT EXISTS (SELECT r FROM Review r WHERE r.appointmentId = a.id)
+    """)
+    fun findCompletedWithoutReview(@Param("since") since: LocalDateTime): List<Appointment>
+}
+
+@Repository
+interface ContactMessageRepository : JpaRepository<ContactMessage, String> {
+    fun deleteByIsReadTrueAndCreatedAtBefore(cutoff: LocalDateTime)
+}
+
+@Repository
+interface SiteSettingsRepository : JpaRepository<SiteSettings, String> {
+    fun findByTenantId(tenantId: String): SiteSettings?
+}
+
+@Repository
+interface TenantRepository : JpaRepository<Tenant, String> {
+    fun findBySlugAndIsActiveTrue(slug: String): Tenant?
+    fun findByCustomDomainAndIsActiveTrue(domain: String): Tenant?
+    fun findAllByIsActiveTrue(): List<Tenant>
+    @Query("SELECT t.customDomain FROM Tenant t WHERE t.customDomain IS NOT NULL AND t.isActive = true")
+    fun findAllCustomDomains(): List<String>
+    fun countByIsActiveTrue(): Long
+}
+
+@Repository
+interface WorkingHoursRepository : JpaRepository<WorkingHours, String> {
+    fun findByTenantIdAndStaffIdAndDayOfWeek(
+        tenantId: String, staffId: String, dayOfWeek: DayOfWeek
+    ): WorkingHours?
+}
+
+@Repository
+interface BlockedTimeSlotRepository : JpaRepository<BlockedTimeSlot, String> {
+    fun findByTenantIdAndStaffIdAndDate(
+        tenantId: String, staffId: String, date: LocalDate
+    ): List<BlockedTimeSlot>
+}
+```
+
 ### 5.4 AvailabilityService — Müsait Slot Hesaplama
 
 ```kotlin
@@ -2244,6 +2331,7 @@ class SecurityConfig(
                         "/api/auth/reset-password"
                     ).permitAll()
                     .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
+                    .requestMatchers("/api/webhooks/**").permitAll()  // Dış servis callback (iyzico vb.)
                     // Platform admin
                     .requestMatchers("/api/platform/**").hasRole("PLATFORM_ADMIN")
                     // Admin endpoints
@@ -2738,8 +2826,94 @@ CREATE TABLE refresh_tokens (
     INDEX idx_rt_expires (expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
 
--- V12__create_payment_tables.sql ve V13__create_notification_tables.sql
--- → Bölüm 17 (Payments) ve Bölüm 18 (Notifications) bölümlerinde detaylandırılmıştır.
+-- V12__create_payment_tables.sql
+CREATE TABLE subscriptions (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    plan VARCHAR(20) NOT NULL DEFAULT 'TRIAL',            -- TRIAL, BASIC, PRO, ENTERPRISE
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    auto_renew BOOLEAN NOT NULL DEFAULT TRUE,
+    max_staff INT NOT NULL DEFAULT 1,
+    max_appointments_per_month INT NOT NULL DEFAULT 50,
+    max_storage_mb INT NOT NULL DEFAULT 100,
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',         -- ACTIVE, EXPIRED, CANCELLED, SUSPENDED
+    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    INDEX idx_sub_tenant_status (tenant_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+CREATE TABLE payments (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    subscription_id VARCHAR(36),
+    amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    currency VARCHAR(3) NOT NULL DEFAULT 'TRY',
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',        -- PENDING, COMPLETED, FAILED, REFUNDED
+    provider VARCHAR(20) NOT NULL DEFAULT 'IYZICO',       -- IYZICO, STRIPE
+    provider_payment_id VARCHAR(255),
+    provider_subscription_id VARCHAR(255),
+    failure_reason TEXT,
+    paid_at TIMESTAMP(6) NULL,
+    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE SET NULL,
+    INDEX idx_pay_tenant (tenant_id),
+    INDEX idx_pay_status (tenant_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+CREATE TABLE invoices (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    payment_id VARCHAR(36),
+    invoice_number VARCHAR(50) NOT NULL,
+    amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    tax_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    total_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    pdf_url VARCHAR(500),
+    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE SET NULL,
+    UNIQUE INDEX idx_inv_number (invoice_number),
+    INDEX idx_inv_tenant (tenant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+-- V13__create_notification_tables.sql
+CREATE TABLE notification_templates (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    type VARCHAR(50) NOT NULL,                            -- APPOINTMENT_CONFIRMATION, REMINDER_24H vb.
+    email_subject VARCHAR(255),
+    email_body TEXT,                                       -- HTML template (Mustache syntax)
+    sms_body VARCHAR(320),                                -- Multi-part SMS (2×160)
+    is_email_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    is_sms_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    UNIQUE INDEX idx_nt_tenant_type (tenant_id, type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+CREATE TABLE notification_logs (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    appointment_id VARCHAR(36),
+    recipient_email VARCHAR(255),
+    recipient_phone VARCHAR(20),
+    channel VARCHAR(10) NOT NULL DEFAULT 'EMAIL',         -- EMAIL, SMS
+    type VARCHAR(50) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',        -- PENDING, SENT, FAILED
+    error_message TEXT,
+    sent_at TIMESTAMP(6) NULL,
+    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    INDEX idx_nl_tenant (tenant_id),
+    INDEX idx_nl_appointment (appointment_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
 
 -- V14__create_client_notes_table.sql
 CREATE TABLE client_notes (                      -- DÜZELTME: Eksik tablo eklendi
@@ -2755,6 +2929,41 @@ CREATE TABLE client_notes (                      -- DÜZELTME: Eksik tablo eklen
     FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE,
 
     INDEX idx_client_notes (tenant_id, client_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+-- V15__create_audit_log_table.sql
+-- Not: AuditLog TenantAwareEntity'den extend ETMEZ (platform admin tüm tenant loglarını görebilir)
+CREATE TABLE audit_logs (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    user_id VARCHAR(36) NOT NULL,
+    action VARCHAR(100) NOT NULL,                         -- CREATE_APPOINTMENT, UPDATE_SERVICE vb.
+    entity_type VARCHAR(50) NOT NULL,                     -- Appointment, Service vb.
+    entity_id VARCHAR(36) NOT NULL,
+    details JSON,                                         -- Değişen alanlar (JSON)
+    ip_address VARCHAR(45),                               -- IPv4 + IPv6
+    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    INDEX idx_audit_tenant (tenant_id, created_at),
+    INDEX idx_audit_entity (entity_type, entity_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+-- V16__create_consent_records_table.sql
+CREATE TABLE consent_records (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    user_id VARCHAR(36) NOT NULL,
+    consent_type VARCHAR(30) NOT NULL,                    -- TERMS_OF_SERVICE, PRIVACY_POLICY, MARKETING_EMAIL vb.
+    is_granted BOOLEAN NOT NULL DEFAULT FALSE,
+    granted_at TIMESTAMP(6) NULL,
+    revoked_at TIMESTAMP(6) NULL,
+    ip_address VARCHAR(45),
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    INDEX idx_consent_tenant_user (tenant_id, user_id),
+    INDEX idx_consent_type (tenant_id, consent_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
 ```
 
@@ -2850,6 +3059,26 @@ server:
   port: ${SERVER_PORT:8080}
 ```
 
+### 9.1.1 application-dev.yml
+
+Geliştirme ortamında SQL logları ve detaylı hata ayıklama aktif edilir. `application.yml`'deki default değerleri override eder:
+
+```yaml
+# application-dev.yml — Geliştirme ortamı overrides
+spring:
+  jpa:
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+logging:
+  level:
+    org.hibernate.SQL: DEBUG
+    org.hibernate.orm.jdbc.bind: TRACE       # Hibernate 6 — bind parameter logları
+    com.aesthetic.backend: TRACE
+```
+
 ### 9.2 build.gradle.kts
 
 ```kotlin
@@ -2920,6 +3149,12 @@ dependencies {
 
     // iyzico (Türkiye ödeme)
     implementation("com.iyzipay:iyzipay-java:2.0.131")
+
+    // SendGrid (e-posta bildirimleri — Bölüm 18)
+    implementation("com.sendgrid:sendgrid-java:4.10.1")
+
+    // Micrometer Prometheus (Actuator metrics export — Bölüm 14)
+    implementation("io.micrometer:micrometer-registry-prometheus")
 
     // Sentry (error tracking)
     implementation("io.sentry:sentry-spring-boot-starter-jakarta:7.14.0")
@@ -3044,8 +3279,22 @@ ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
 
 ### 10.3 Multi-Stage Build (Prodüksiyon)
 
-> **Not:** `.dockerignore` dosyası oluşturun: `.git`, `.idea`, `build/`, `node_modules/`, `*.md` gibi
-> gereksiz dosyaların Docker context'e girmesini engelleyin.
+> **Not:** Aşağıdaki `.dockerignore` dosyasını proje kök dizinine ekleyin:
+
+```text
+# .dockerignore
+.git/
+.gitignore
+.idea/
+.vscode/
+*.md
+build/
+out/
+node_modules/
+docker-compose*.yml
+.env*
+src/test/
+```
 
 ```dockerfile
 # Build stage
@@ -3542,6 +3791,11 @@ class PlanLimitService(
                 "Planınızı yükseltin."
             )
         }
+    }
+
+    private fun getActiveSubscription(tenantId: String): Subscription {
+        return subscriptionRepository.findByTenantIdAndStatus(tenantId, SubscriptionStatus.ACTIVE)
+            ?: throw PlanLimitExceededException("Aktif abonelik bulunamadı. Lütfen bir plan satın alın.")
     }
 }
 ```
