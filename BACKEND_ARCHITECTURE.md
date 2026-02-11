@@ -72,7 +72,11 @@ Tüm tenant'lar **aynı veritabanı ve aynı tabloları** paylaşır. Her tablo 
 ```kotlin
 // TenantContext.kt — ThreadLocal ile tenant bilgisi taşıma
 object TenantContext {
-    private val currentTenant = InheritableThreadLocal<String>()
+    // DİKKAT: InheritableThreadLocal DEĞİL, düz ThreadLocal kullanılmalı!
+    // InheritableThreadLocal thread pool'larda sorunludur: thread yeniden kullanıldığında
+    // eski parent thread'in tenant bilgisi kalır ve yanlış tenant'a erişim riski oluşur.
+    // Async propagation için TenantAwareTaskDecorator kullanılır (bkz. 2.4).
+    private val currentTenant = ThreadLocal<String>()
 
     fun setTenantId(tenantId: String) = currentTenant.set(tenantId)
     fun getTenantId(): String = currentTenant.get()
@@ -90,20 +94,38 @@ class TenantFilter(
     private val tenantRepository: TenantRepository
 ) : OncePerRequestFilter() {
 
+    companion object {
+        private val logger = LoggerFactory.getLogger(TenantFilter::class.java)
+    }
+
+    // Caffeine local cache — Her istekte DB sorgusu yapmayı önler.
+    // TTL 5 dakika: Tenant deaktive edilirse max 5 dk gecikmeyle algılanır.
+    // Tenant deaktivasyonunda manuel invalidation için invalidateTenantCache() metodu var.
+    private val tenantCache: Cache<String, Tenant> = Caffeine.newBuilder()
+        .maximumSize(1_000)
+        .expireAfterWrite(Duration.ofMinutes(5))
+        .build()
+
     // Platform admin ve auth endpoint'leri tenant gerektirmez
-    private val tenantExemptPaths = listOf(
-        "/api/platform/",
+    // exactPaths: Tam eşleşme (prefix değil!)
+    // prefixPaths: Prefix eşleşme (alt yollar dahil)
+    private val exactExemptPaths = setOf(
         "/api/auth/login",
         "/api/auth/register",
+        "/api/auth/refresh",
         "/api/auth/forgot-password",
-        "/api/auth/reset-password",
+        "/api/auth/reset-password"
+    )
+    private val prefixExemptPaths = listOf(
+        "/api/platform/",
         "/swagger-ui/",
         "/v3/api-docs",
         "/actuator/"
     )
 
     override fun shouldNotFilter(request: HttpServletRequest): Boolean {
-        return tenantExemptPaths.any { request.requestURI.startsWith(it) }
+        val uri = request.requestURI
+        return uri in exactExemptPaths || prefixExemptPaths.any { uri.startsWith(it) }
     }
 
     override fun doFilterInternal(
@@ -112,11 +134,8 @@ class TenantFilter(
         filterChain: FilterChain
     ) {
         try {
-            val tenantSlug = resolveSubdomainTenant(request)
-
-            // Tenant'ın veritabanında var ve aktif olduğunu doğrula
-            val tenant = tenantRepository.findBySlugAndIsActiveTrue(tenantSlug)
-                ?: throw TenantNotFoundException("Tenant bulunamadı veya aktif değil: $tenantSlug")
+            val host = request.serverName
+            val tenant = resolveTenant(host)
 
             TenantContext.setTenantId(tenant.id!!)
             filterChain.doFilter(request, response)
@@ -125,19 +144,53 @@ class TenantFilter(
         }
     }
 
-    private fun resolveSubdomainTenant(request: HttpServletRequest): String {
-        val host = request.serverName  // salon1.app.com
-        val parts = host.split(".")
-
-        // En az 3 parça: [salon1, app, com]
-        if (parts.size >= 3) {
-            val subdomain = parts.first()
-            if (subdomain != "www" && subdomain != "api" && subdomain != "admin") {
-                return subdomain
+    /**
+     * Tenant çözümleme: Önce subdomain, başarısız olursa custom domain dener.
+     * Sonuç Caffeine cache'te tutulur (5 dk TTL).
+     */
+    private fun resolveTenant(host: String): Tenant {
+        // 1. Subdomain dene: salon1.app.com → slug = "salon1"
+        val slug = extractSubdomain(host)
+        if (slug != null) {
+            return tenantCache.get(slug) { key ->
+                tenantRepository.findBySlugAndIsActiveTrue(key)
+                    ?: throw TenantNotFoundException("Tenant bulunamadı veya aktif değil: $key")
             }
         }
 
-        throw TenantNotFoundException("Tenant belirlenemedi. Subdomain gerekli: {slug}.app.com")
+        // 2. Custom domain dene: salongüzellik.com → customDomain alanından çöz
+        // NOT: Bu özellik Tenant entity'sinde customDomain alanı gerektirir.
+        val cacheKey = "domain:$host"
+        return tenantCache.get(cacheKey) { _ ->
+            tenantRepository.findByCustomDomainAndIsActiveTrue(host)
+                ?: throw TenantNotFoundException(
+                    "Tenant belirlenemedi. Subdomain ({slug}.app.com) veya kayıtlı custom domain gerekli."
+                )
+        }
+    }
+
+    /**
+     * Subdomain çıkarma: salon1.app.com → "salon1"
+     * www, api, admin subdomain'leri hariç tutulur.
+     */
+    private fun extractSubdomain(host: String): String? {
+        val parts = host.split(".")
+        if (parts.size >= 3) {
+            val subdomain = parts.first()
+            if (subdomain !in setOf("www", "api", "admin")) {
+                return subdomain
+            }
+        }
+        return null
+    }
+
+    /**
+     * Tenant deaktive edildiğinde cache'ten manual invalidation.
+     * Admin API'den çağrılmalı.
+     */
+    fun invalidateTenantCache(slug: String) {
+        tenantCache.invalidate(slug)
+        logger.info("Tenant cache invalidated: $slug")
     }
 }
 ```
@@ -184,12 +237,14 @@ class JwtAuthenticationFilter(
 
 ```kotlin
 // TenantAwareEntity.kt — Tüm tenant-scoped entity'lerin base class'ı
-// @FilterDef burada tanımlanır, tüm child entity'ler otomatik miras alır
+// @FilterDef burada tanımlanır, tüm child entity'ler otomatik miras alır.
+// @EntityListeners ile INSERT/UPDATE/DELETE koruması sağlanır.
 @FilterDef(
     name = "tenantFilter",
     parameters = [ParamDef(name = "tenantId", type = "string")]
 )
 @Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
+@EntityListeners(TenantEntityListener::class)
 @MappedSuperclass
 abstract class TenantAwareEntity {
     @Column(name = "tenant_id", nullable = false, updatable = false)
@@ -197,7 +252,12 @@ abstract class TenantAwareEntity {
 }
 ```
 
-> **ÖNEMLİ:** Tüm tenant-scoped entity'ler `TenantAwareEntity`'den extend etmelidir. Bu sayede `@FilterDef` ve `@Filter` annotation'ları otomatik miras alınır. Entity'lerde tekrar tanımlama gerekmez.
+> **ÖNEMLİ:** Tüm tenant-scoped entity'ler `TenantAwareEntity`'den extend etmelidir. Bu sayede:
+> - `@FilterDef` ve `@Filter` annotation'ları otomatik miras alınır (SELECT koruması)
+> - `@EntityListeners(TenantEntityListener)` otomatik miras alınır (INSERT/UPDATE/DELETE koruması)
+> - Entity'lerde tekrar tanımlama gerekmez.
+>
+> **Hibernate 6 NOTU:** Bazı Hibernate 6 versiyonlarında `@FilterDef`'in `@MappedSuperclass` üzerinden miras alınmasında sorun olabilir. Bu durumda `@FilterDef` + `@Filter` annotation'larını her entity üzerinde ayrı ayrı tanımlayın.
 
 ```kotlin
 // TenantAspect.kt — EntityManager'da filter aktifleştirme (SELECT koruması)
@@ -205,7 +265,14 @@ abstract class TenantAwareEntity {
 @Component
 class TenantAspect(private val entityManager: EntityManager) {
 
-    @Before("execution(* com.aesthetic.backend.repository..*.*(..))")
+    // KRİTİK: TenantRepository HARİÇ tutulmalı! Çünkü TenantFilter içinde
+    // TenantContext set edilmeden ÖNCE TenantRepository çağrılır.
+    // Ayrıca RefreshTokenRepository de hariç (token rotation'da tenant context olmayabilir).
+    @Before(
+        "execution(* com.aesthetic.backend.repository..*.*(..)) " +
+        "&& !execution(* com.aesthetic.backend.repository.TenantRepository.*(..)) " +
+        "&& !execution(* com.aesthetic.backend.repository.RefreshTokenRepository.*(..))"
+    )
     fun enableTenantFilter() {
         val tenantId = TenantContext.getTenantIdOrNull() ?: return  // Platform admin bypass
         val session = entityManager.unwrap(Session::class.java)
@@ -216,10 +283,12 @@ class TenantAspect(private val entityManager: EntityManager) {
 ```
 
 ```kotlin
-// TenantInterceptor.kt — INSERT/UPDATE koruması
-// Hibernate @Filter sadece SELECT'leri korur! INSERT/UPDATE/DELETE için bu interceptor gerekli.
-@Component
-class TenantInterceptor : JpaBaseConfiguration.EntityCallback {
+// TenantEntityListener.kt — INSERT/UPDATE/DELETE koruması (JPA EntityListener)
+// Hibernate @Filter sadece SELECT'leri korur! INSERT/UPDATE/DELETE için bu listener gerekli.
+//
+// NOT: JPA EntityListener'lar Spring-managed bean DEĞİLDİR. TenantContext'e erişim için
+// static/object erişim kullanılır (TenantContext zaten object singleton).
+class TenantEntityListener {
 
     @PrePersist
     fun onPrePersist(entity: Any) {
@@ -266,13 +335,19 @@ class TenantAwareTaskDecorator : TaskDecorator {
     override fun decorate(runnable: Runnable): Runnable {
         // Ana thread'deki tenant bilgisini yakala
         val tenantId = TenantContext.getTenantIdOrNull()
-        val securityContext = SecurityContextHolder.getContext()
+
+        // KRİTİK: SecurityContext KOPYALANMALI, referans paylaşılmamalı!
+        // Aksi halde parent thread context'i değiştirirse child thread etkilenir.
+        val originalContext = SecurityContextHolder.getContext()
+        val clonedContext = SecurityContextHolder.createEmptyContext().apply {
+            authentication = originalContext.authentication
+        }
 
         return Runnable {
             try {
                 // Yeni thread'e tenant bilgisini aktar
                 tenantId?.let { TenantContext.setTenantId(it) }
-                SecurityContextHolder.setContext(securityContext)
+                SecurityContextHolder.setContext(clonedContext)
                 runnable.run()
             } finally {
                 TenantContext.clear()
@@ -296,7 +371,8 @@ class AsyncConfig {
         executor.queueCapacity = 100
         executor.setThreadNamePrefix("async-tenant-")
         executor.setTaskDecorator(TenantAwareTaskDecorator())  // KRİTİK!
-        executor.initialize()
+        // NOT: executor.initialize() çağrısı GEREKMEZ.
+        // Spring @Bean lifecycle otomatik olarak afterPropertiesSet() → initialize() çağırır.
         return executor
     }
 }
@@ -312,6 +388,9 @@ Zamanlanan görevler (hatırlatıcılar, temizlik, trial süresi kontrolü) tüm
 class TenantAwareScheduler(
     private val tenantRepository: TenantRepository
 ) {
+    companion object {
+        private val logger = LoggerFactory.getLogger(TenantAwareScheduler::class.java)
+    }
     /**
      * Tüm aktif tenant'lar üzerinde bir işlem çalıştır.
      * Her tenant için TenantContext set edilir ve sonra temizlenir.
@@ -337,7 +416,7 @@ class AppointmentReminderJob(
     private val tenantAwareScheduler: TenantAwareScheduler,
     private val notificationService: NotificationService
 ) {
-    @Scheduled(fixedRate = 60_000)  // Her 1 dakikada
+    @Scheduled(fixedRate = 300_000)  // Her 5 dakikada (tüm tenant'lar iterate edilir)
     fun sendReminders() {
         tenantAwareScheduler.executeForAllTenants { tenant ->
             notificationService.sendUpcomingAppointmentReminders()
@@ -365,8 +444,29 @@ class TenantAwareCacheKeyGenerator : KeyGenerator {
 @Cacheable(value = ["services"], keyGenerator = "tenantCacheKeyGenerator")
 fun getActiveServices(): List<Service> { ... }
 
-@CacheEvict(value = ["services"], allEntries = true)
+// DİKKAT: allEntries=true KULLANMAYIN! Tüm tenant'ların cache'ini siler.
+// Bunun yerine tenant-scoped eviction yapın:
+@CacheEvict(value = ["services"], keyGenerator = "tenantCacheKeyGenerator")
 fun createService(request: CreateServiceRequest): Service { ... }
+
+// Eğer bir tenant'ın TÜM cache entry'lerini silmek gerekiyorsa:
+// Redis'te pattern-based silme kullanın:
+@Component
+class TenantCacheManager(private val redisTemplate: StringRedisTemplate) {
+    /**
+     * Belirli bir tenant'ın belirli bir cache grubundaki TÜM entry'lerini temizler.
+     * Pattern: "tenant:{tenantId}:*"
+     * allEntries=true yerine bu metodu kullanın!
+     */
+    fun evictAllForCurrentTenant(cacheName: String) {
+        val tenantId = TenantContext.getTenantId()
+        val pattern = "tenant:$tenantId:$cacheName:*"
+        val keys = redisTemplate.keys(pattern)
+        if (keys.isNotEmpty()) {
+            redisTemplate.delete(keys)
+        }
+    }
+}
 ```
 
 ---
