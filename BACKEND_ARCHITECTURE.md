@@ -4346,6 +4346,7 @@ JWT_SECRET=min-256-bit-secret-key-for-production-use
 # ─── Server ───
 SERVER_PORT=8080
 SPRING_PROFILES_ACTIVE=dev           # dev | staging | prod
+JAVA_OPTS=-Xmx512m -Xms256m         # JVM memory (Bölüm 10 docker-compose'da kullanılır)
 
 # ─── Redis ───
 REDIS_HOST=localhost
