@@ -1779,6 +1779,24 @@ interface BlockedTimeSlotRepository : JpaRepository<BlockedTimeSlot, String> {
         tenantId: String, staffId: String, date: LocalDate
     ): List<BlockedTimeSlot>
 }
+
+// Pivot tablo repository — JpaRepository.save() ve findAll() yeterli
+@Repository
+interface AppointmentServiceRepository : JpaRepository<AppointmentService, String>
+
+// Hizmet repository — JpaRepository.findAllById() miras alınır
+@Repository
+interface ServiceRepository : JpaRepository<Service, String>
+
+// Bildirim template repository
+@Repository
+interface NotificationTemplateRepository : JpaRepository<NotificationTemplate, String> {
+    fun findByTenantIdAndType(tenantId: String, type: NotificationType): NotificationTemplate?
+}
+
+// Bildirim log repository — JpaRepository.save() miras alınır
+@Repository
+interface NotificationLogRepository : JpaRepository<NotificationLog, String>
 ```
 
 ### 5.4 AvailabilityService — Müsait Slot Hesaplama
