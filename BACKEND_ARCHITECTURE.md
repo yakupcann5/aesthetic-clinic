@@ -714,18 +714,22 @@ class Tenant(
     var email: String = "",
     var address: String = "",
     var logoUrl: String? = null,
-    var domain: String? = null,             // Özel domain (opsiyonel)
+
+    @Column(unique = true)
+    var customDomain: String? = null,       // Özel domain (opsiyonel): "salongüzellik.com"
 
     @Enumerated(EnumType.STRING)
     var plan: SubscriptionPlan = SubscriptionPlan.TRIAL,
 
+    var trialEndDate: LocalDate? = null,    // Trial bitiş tarihi (TRIAL planında zorunlu)
+
     var isActive: Boolean = true,
 
-    @Column(name = "created_at")
-    val createdAt: LocalDateTime = LocalDateTime.now(),
+    @CreationTimestamp
+    val createdAt: LocalDateTime? = null,
 
-    @Column(name = "updated_at")
-    var updatedAt: LocalDateTime = LocalDateTime.now()
+    @UpdateTimestamp
+    var updatedAt: LocalDateTime? = null
 )
 
 enum class BusinessType {
@@ -805,6 +809,12 @@ enum class Role {
     CLIENT              // Müşteri — kendi randevuları, profili
 }
 
+// NOT: PLATFORM_ADMIN kullanıcıları da users tablosunda tutulur ancak özel tenant_id
+// değeri olarak sabit "PLATFORM" kullanılır. TenantAspect bu değeri gördüğünde
+// Hibernate filter'ı devre dışı bırakır (tüm tenant verilerine erişim).
+// Alternatif: Ayrı bir platform_admins tablosu oluşturulabilir ancak bu, auth
+// sistemini karmaşıklaştırır. Tek tablo + magic tenant_id daha pragmatiktir.
+
 // ClientNote.kt — Personel'in müşteri hakkında özel notları
 @Entity
 @Table(name = "client_notes")
@@ -812,13 +822,13 @@ class ClientNote : TenantAwareEntity() {
     @Id @GeneratedValue(strategy = GenerationType.UUID)
     val id: String? = null
 
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "client_id", nullable = false)
-    var client: User? = null          // Not hangi müşteriye ait
+    lateinit var client: User          // Not hangi müşteriye ait
 
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "author_id", nullable = false)
-    var author: User? = null          // Notu yazan personel
+    lateinit var author: User          // Notu yazan personel
 
     @Column(columnDefinition = "TEXT")
     var content: String = ""          // "Lateks alerjisi var", "Sol omuz hassas"
@@ -894,6 +904,32 @@ class Service : TenantAwareEntity() {
 
     @UpdateTimestamp
     var updatedAt: LocalDateTime? = null
+}
+
+// ServiceCategory.kt — Hizmet kategorileri
+@Entity
+@Table(
+    name = "service_categories",
+    uniqueConstraints = [
+        UniqueConstraint(name = "uk_category_slug_tenant", columnNames = ["slug", "tenant_id"])
+    ]
+)
+class ServiceCategory : TenantAwareEntity() {
+    @Id @GeneratedValue(strategy = GenerationType.UUID)
+    val id: String? = null
+
+    var slug: String = ""               // "yuz-bakimi", "lazer"
+    var name: String = ""               // "Yüz Bakımı", "Lazer Epilasyon"
+    var description: String? = null
+    var image: String? = null
+    var sortOrder: Int = 0
+    var isActive: Boolean = true
+
+    @OneToMany(mappedBy = "category", fetch = FetchType.LAZY)
+    val services: MutableList<Service> = mutableListOf()
+
+    @CreationTimestamp val createdAt: LocalDateTime? = null
+    @UpdateTimestamp var updatedAt: LocalDateTime? = null
 }
 ```
 
@@ -982,9 +1018,11 @@ class Appointment : TenantAwareEntity() {
 }
 
 // AppointmentService.kt — Randevu-Hizmet ilişkisi (çoklu hizmet desteği)
+// KRİTİK: TenantAwareEntity'den extend etmeli! Aksi halde Hibernate filter uygulanmaz
+// ve cross-tenant sorgularda yanlış tenant'ın appointment_services satırları dönebilir.
 @Entity
 @Table(name = "appointment_services")
-class AppointmentService {
+class AppointmentService : TenantAwareEntity() {
     @Id @GeneratedValue(strategy = GenerationType.UUID)
     val id: String? = null
 
@@ -1024,57 +1062,73 @@ enum class AppointmentStatus {
 ### 4.5 WorkingHours (Çalışma Saatleri)
 
 ```kotlin
+// KRİTİK DÜZELTME: TenantAwareEntity'den extend ediyor.
+// Önceki versiyon manuel tenant_id + @Filter tanımlıyordu ama @FilterDef ve
+// @EntityListeners eksikti → filter çalışmaz, tenant_id auto-set olmazdı.
 @Entity
-@Table(name = "working_hours")
-@Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
-class WorkingHours(
+@Table(
+    name = "working_hours",
+    indexes = [
+        Index(name = "idx_wh_tenant_staff", columnList = "tenant_id, staff_id, day_of_week")
+    ]
+)
+class WorkingHours : TenantAwareEntity() {
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
-    val id: String? = null,
-
-    @Column(name = "tenant_id", nullable = false)
-    val tenantId: String,
+    val id: String? = null
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "staff_id")
-    var staff: User? = null,                // null ise genel işletme saatleri
+    var staff: User? = null                 // null ise genel işletme saatleri
 
     @Enumerated(EnumType.STRING)
-    var dayOfWeek: DayOfWeek,               // MONDAY, TUESDAY, ...
+    @Column(name = "day_of_week", nullable = false)
+    var dayOfWeek: DayOfWeek = DayOfWeek.MONDAY
 
-    var startTime: LocalTime,               // 09:00
-    var endTime: LocalTime,                 // 18:00
+    @Column(nullable = false)
+    var startTime: LocalTime = LocalTime.of(9, 0)
 
-    var breakStartTime: LocalTime? = null,  // 12:00 (öğle arası)
-    var breakEndTime: LocalTime? = null,    // 13:00
+    @Column(nullable = false)
+    var endTime: LocalTime = LocalTime.of(18, 0)
 
-    var isWorkingDay: Boolean = true         // false = kapalı gün
-)
+    var breakStartTime: LocalTime? = null   // 12:00 (öğle arası)
+    var breakEndTime: LocalTime? = null     // 13:00
+
+    var isWorkingDay: Boolean = true        // false = kapalı gün
+}
 ```
 
 ### 4.6 BlockedTimeSlot (Bloklanmış Zaman Dilimi)
 
 ```kotlin
+// KRİTİK DÜZELTME: TenantAwareEntity'den extend ediyor (aynı WorkingHours sorunu).
 @Entity
-@Table(name = "blocked_time_slots")
-@Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
-class BlockedTimeSlot(
+@Table(
+    name = "blocked_time_slots",
+    indexes = [
+        Index(name = "idx_bts_tenant_staff_date", columnList = "tenant_id, staff_id, date")
+    ]
+)
+class BlockedTimeSlot : TenantAwareEntity() {
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
-    val id: String? = null,
-
-    @Column(name = "tenant_id", nullable = false)
-    val tenantId: String,
+    val id: String? = null
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "staff_id")
-    var staff: User? = null,
+    var staff: User? = null
 
-    var date: LocalDate,
-    var startTime: LocalTime,
-    var endTime: LocalTime,
+    @Column(nullable = false)
+    var date: LocalDate = LocalDate.now()
+
+    @Column(nullable = false)
+    var startTime: LocalTime = LocalTime.of(9, 0)
+
+    @Column(nullable = false)
+    var endTime: LocalTime = LocalTime.of(10, 0)
+
     var reason: String? = null               // "Tatil", "Toplantı" vb.
-)
+}
 ```
 
 ### 4.7 Diğer Entity'ler
@@ -1234,7 +1288,8 @@ class Review : TenantAwareEntity() {
     @JoinColumn(name = "staff_id")
     var staff: User? = null
 
-    var rating: Int = 5                        // 1-5 yıldız
+    @Column(nullable = false)
+    var rating: Int = 0                        // 1-5 yıldız (0 = henüz değerlendirilmedi)
     @Column(columnDefinition = "TEXT")
     var comment: String? = null
     var isApproved: Boolean = false             // Admin onayı gerekli
