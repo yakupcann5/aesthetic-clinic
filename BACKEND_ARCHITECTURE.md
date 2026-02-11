@@ -3587,7 +3587,12 @@ class PlanLimitService(
 
 ```kotlin
 @Entity
-@Table(name = "notification_templates")
+@Table(
+    name = "notification_templates",
+    uniqueConstraints = [                                // DÜZELTME: Tenant+type unique
+        UniqueConstraint(columnNames = ["tenant_id", "type"])
+    ]
+)
 class NotificationTemplate : TenantAwareEntity() {
     @Id @GeneratedValue(strategy = GenerationType.UUID)
     val id: String? = null
@@ -3598,7 +3603,8 @@ class NotificationTemplate : TenantAwareEntity() {
     var emailSubject: String? = null          // "Randevunuz onaylandı — {{serviceName}}"
     @Column(columnDefinition = "TEXT")
     var emailBody: String? = null             // HTML template (Mustache syntax)
-    var smsBody: String? = null               // SMS template (160 karakter)
+    @Column(length = 320)                     // DÜZELTME: SMS uzunluk sınırı (multi-part: 2×160)
+    var smsBody: String? = null
 
     var isEmailEnabled: Boolean = true
     var isSmsEnabled: Boolean = false          // SMS ek maliyet, opsiyonel
@@ -3609,6 +3615,8 @@ class NotificationTemplate : TenantAwareEntity() {
 class NotificationLog : TenantAwareEntity() {
     @Id @GeneratedValue(strategy = GenerationType.UUID)
     val id: String? = null
+
+    var appointmentId: String? = null          // DÜZELTME: Hangi randevuya ait olduğu
     var recipientEmail: String? = null
     var recipientPhone: String? = null
 
@@ -3623,8 +3631,8 @@ class NotificationLog : TenantAwareEntity() {
 
     var errorMessage: String? = null
     var retryCount: Int = 0
-    var sentAt: LocalDateTime? = null
-    @CreationTimestamp val createdAt: LocalDateTime? = null
+    var sentAt: Instant? = null                // DÜZELTME: LocalDateTime → Instant (UTC)
+    @CreationTimestamp val createdAt: Instant? = null   // DÜZELTME: LocalDateTime → Instant
 }
 
 enum class NotificationType {
@@ -3648,42 +3656,77 @@ enum class DeliveryStatus { PENDING, SENT, FAILED, BOUNCED }
 class AppointmentReminderJob(
     private val tenantAwareScheduler: TenantAwareScheduler,
     private val appointmentRepository: AppointmentRepository,
-    private val notificationService: NotificationService
+    private val notificationService: NotificationService,
+    private val siteSettingsRepository: SiteSettingsRepository    // DÜZELTME: Tenant timezone
 ) {
+    companion object {
+        private val logger = LoggerFactory.getLogger(AppointmentReminderJob::class.java)
+    }
+
     // Her 5 dakikada çalışır
     @Scheduled(fixedRate = 300_000)
     fun send24HourReminders() {
-        tenantAwareScheduler.executeForAllTenants { _ ->
-            val tomorrow = LocalDateTime.now().plusHours(24)
-            val appointments = appointmentRepository
-                .findUpcoming(tomorrow.toLocalDate(), tomorrow.toLocalTime(), false)
+        tenantAwareScheduler.executeForAllTenants { tenant ->
+            // DÜZELTME: Tenant timezone ile "24 saat sonra" hesapla
+            val settings = siteSettingsRepository.findByTenantId(tenant.id!!)
+            val tenantZone = ZoneId.of(settings?.timezone ?: "Europe/Istanbul")
+            val tomorrow = ZonedDateTime.now(tenantZone).plusHours(24)
 
+            // DÜZELTME: Repository'de reminder24hSent=false filtresi
+            val appointments = appointmentRepository
+                .findUpcomingNotReminded(tomorrow.toLocalDate(), tomorrow.toLocalTime(), reminder24hSent = false)
+
+            val updated = mutableListOf<Appointment>()
             appointments.forEach { appointment ->
-                notificationService.sendReminder(appointment, NotificationType.APPOINTMENT_REMINDER_24H)
-                appointment.reminder24hSent = true
-                appointmentRepository.save(appointment)
+                try {                                            // DÜZELTME: Per-appointment error handling
+                    notificationService.sendReminder(appointment, NotificationType.APPOINTMENT_REMINDER_24H)
+                    appointment.reminder24hSent = true
+                    updated.add(appointment)
+                } catch (e: Exception) {
+                    logger.error("24h hatırlatma gönderilemedi — appointment={}", appointment.id, e)
+                }
+            }
+            if (updated.isNotEmpty()) {
+                appointmentRepository.saveAll(updated)           // DÜZELTME: Batch save
             }
         }
     }
 
     @Scheduled(fixedRate = 300_000)
     fun send1HourReminders() {
-        tenantAwareScheduler.executeForAllTenants { _ ->
-            val oneHourLater = LocalDateTime.now().plusHours(1)
-            val appointments = appointmentRepository
-                .findUpcoming(oneHourLater.toLocalDate(), oneHourLater.toLocalTime(), true)
+        tenantAwareScheduler.executeForAllTenants { tenant ->
+            val settings = siteSettingsRepository.findByTenantId(tenant.id!!)
+            val tenantZone = ZoneId.of(settings?.timezone ?: "Europe/Istanbul")
+            val oneHourLater = ZonedDateTime.now(tenantZone).plusHours(1)
 
-            appointments.filter { !it.reminder1hSent }.forEach { appointment ->
-                notificationService.sendReminder(appointment, NotificationType.APPOINTMENT_REMINDER_1H)
-                appointment.reminder1hSent = true
-                appointmentRepository.save(appointment)
+            // DÜZELTME: Repository'de iki flag birden filtrele (24h gönderilmiş, 1h gönderilmemiş)
+            val appointments = appointmentRepository
+                .findUpcomingNotReminded(oneHourLater.toLocalDate(), oneHourLater.toLocalTime(),
+                    reminder24hSent = true, reminder1hSent = false)
+
+            val updated = mutableListOf<Appointment>()
+            appointments.forEach { appointment ->
+                try {
+                    notificationService.sendReminder(appointment, NotificationType.APPOINTMENT_REMINDER_1H)
+                    appointment.reminder1hSent = true
+                    updated.add(appointment)
+                } catch (e: Exception) {
+                    logger.error("1h hatırlatma gönderilemedi — appointment={}", appointment.id, e)
+                }
+            }
+            if (updated.isNotEmpty()) {
+                appointmentRepository.saveAll(updated)
             }
         }
     }
 }
 ```
 
-### 18.4 SMS Provider (Netgsm — Türkiye)
+### 18.4 Bildirim Provider Konfigürasyonu
+
+> **build.gradle.kts dependency'leri:**
+> - E-posta: `implementation("com.sendgrid:sendgrid-java:4.10.2")`
+> - SMS (Netgsm): REST API kullanır, ek dependency gerekmez (`RestTemplate`/`WebClient` ile)
 
 ```yaml
 # application.yml
