@@ -1527,7 +1527,7 @@ class AppointmentService(
         }
 
         appointment.status = AppointmentStatus.CANCELLED
-        appointment.cancelledAt = LocalDateTime.now()
+        appointment.cancelledAt = Instant.now()
         appointment.cancellationReason = reason
 
         val saved = appointmentRepository.save(appointment)
@@ -1551,7 +1551,7 @@ class AppointmentService(
         appointment.status = newStatus
 
         if (newStatus == AppointmentStatus.CANCELLED) {
-            appointment.cancelledAt = LocalDateTime.now()
+            appointment.cancelledAt = Instant.now()
             appointment.cancellationReason = reason
         }
 
@@ -1741,7 +1741,7 @@ interface AppointmentRepository : JpaRepository<Appointment, String> {
         SELECT a FROM Appointment a
         WHERE a.status = 'COMPLETED'
         AND a.updatedAt >= :since
-        AND NOT EXISTS (SELECT r FROM Review r WHERE r.appointmentId = a.id)
+        AND NOT EXISTS (SELECT r FROM Review r WHERE r.appointment.id = a.id)
     """)
     fun findCompletedWithoutReview(@Param("since") since: LocalDateTime): List<Appointment>
 }
@@ -2195,7 +2195,7 @@ enum class ErrorCode {
 }
 ```
 
-### 6.2 Request/Response DTO Tanımları
+### 6.6 Request/Response DTO Tanımları
 
 ```kotlin
 // ── Request DTO'ları ── (Controller'a gelen istekler)
@@ -2347,10 +2347,8 @@ class AuthService(
             ?: throw UnauthorizedException("Geçersiz e-posta veya şifre")
 
         // Hesap kilitli mi kontrol et
-        // KRİTİK: Tenant timezone kullan (sunucu timezone'u değil!)
-        val settings = settingsRepository.findByTenantId(tenantId)
-        val tenantZone = ZoneId.of(settings?.timezone ?: "Europe/Istanbul")
-        val now = ZonedDateTime.now(tenantZone).toLocalDateTime()
+        // KRİTİK: lockedUntil Instant (UTC) — timezone dönüşümü gereksiz
+        val now = Instant.now()
 
         if (user.lockedUntil != null && user.lockedUntil!!.isAfter(now)) {
             val remainingMinutes = Duration.between(now, user.lockedUntil).toMinutes()
@@ -2364,7 +2362,7 @@ class AuthService(
         if (!passwordEncoder.matches(request.password, user.passwordHash)) {
             user.failedLoginAttempts++
             if (user.failedLoginAttempts >= MAX_FAILED_ATTEMPTS) {
-                user.lockedUntil = now.plusMinutes(LOCK_DURATION_MINUTES)
+                user.lockedUntil = now.plus(LOCK_DURATION_MINUTES, ChronoUnit.MINUTES)
                 logger.warn("[tenant={}] Hesap kilitlendi: {} ({} başarısız deneme)",
                     tenantId, user.email, user.failedLoginAttempts)
             }
@@ -2904,8 +2902,8 @@ CREATE TABLE tenants (
     plan ENUM('TRIAL','BASIC','PROFESSIONAL','ENTERPRISE') DEFAULT 'TRIAL',
     trial_end_date DATE,                         -- DÜZELTME: Eksik alan eklendi
     is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
 
 -- V2__create_user_table.sql
@@ -2940,8 +2938,8 @@ CREATE TABLE service_categories (                -- DÜZELTME: Eksik tablo eklen
     image VARCHAR(500),
     sort_order INT DEFAULT 0,
     is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
 
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
     UNIQUE KEY uk_category_slug_tenant (slug, tenant_id)
@@ -3089,15 +3087,15 @@ CREATE TABLE appointments (
     notes TEXT,
     status ENUM('PENDING','CONFIRMED','IN_PROGRESS','COMPLETED','CANCELLED','NO_SHOW')
         DEFAULT 'PENDING',
-    cancelled_at TIMESTAMP NULL,
+    cancelled_at TIMESTAMP(6) NULL,
     cancellation_reason VARCHAR(500),
     recurring_group_id VARCHAR(36),              -- Tekrarlayan randevu grubu
     recurrence_rule VARCHAR(20),                 -- WEEKLY, BIWEEKLY, MONTHLY
     reminder_24h_sent BOOLEAN DEFAULT FALSE,     -- Hatırlatıcı durumları
     reminder_1h_sent BOOLEAN DEFAULT FALSE,
     version BIGINT DEFAULT 0,                    -- Optimistic locking
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
 
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
     FOREIGN KEY (client_id) REFERENCES users(id) ON DELETE SET NULL,
@@ -3211,7 +3209,7 @@ CREATE TABLE reviews (
     comment TEXT,
     is_approved BOOLEAN DEFAULT FALSE,
     is_public BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
 
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
     FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE SET NULL,
@@ -3229,9 +3227,9 @@ CREATE TABLE refresh_tokens (
     user_id VARCHAR(36) NOT NULL,
     tenant_id VARCHAR(36) NOT NULL,
     family VARCHAR(36) NOT NULL,                 -- Token ailesi (theft detection)
-    expires_at TIMESTAMP NOT NULL,
+    expires_at TIMESTAMP(6) NOT NULL,
     is_revoked BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
 
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
 
@@ -3336,7 +3334,7 @@ CREATE TABLE client_notes (                      -- DÜZELTME: Eksik tablo eklen
     client_id VARCHAR(36) NOT NULL,
     author_id VARCHAR(36) NOT NULL,
     content TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
 
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
     FOREIGN KEY (client_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -4130,6 +4128,15 @@ class AppointmentConcurrencyTest {
 ```
 
 ---
+
+## 16. Raporlama & İstatistik
+
+> **Not:** Bu bölüm ileride detaylandırılacaktır. Planlanan içerik:
+> - Tenant bazlı dashboard istatistikleri (günlük/haftalık/aylık randevu sayısı, gelir)
+> - Staff performans raporları (randevu sayısı, ortalama rating, iptal oranı)
+> - Hizmet popülerlik analizi (en çok tercih edilen hizmetler, gelir dağılımı)
+> - Müşteri segmentasyonu (yeni/tekrarlayan, LTV hesaplama)
+> - Excel/PDF export desteği
 
 ---
 
