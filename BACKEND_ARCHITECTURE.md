@@ -3757,8 +3757,14 @@ class ScheduledJobs(
     private val tenantAwareScheduler: TenantAwareScheduler,
     private val subscriptionService: SubscriptionService,
     private val appointmentRepository: AppointmentRepository,
-    private val notificationService: NotificationService
+    private val contactMessageRepository: ContactMessageRepository,  // DÜZELTME: Eksik dependency
+    private val notificationService: NotificationService,
+    private val siteSettingsRepository: SiteSettingsRepository       // DÜZELTME: Tenant timezone
 ) {
+    companion object {
+        private val logger = LoggerFactory.getLogger(ScheduledJobs::class.java)
+    }
+
     // Trial süresi dolan tenant'ları pasifleştir
     @Scheduled(cron = "0 0 2 * * ?")  // Her gece 02:00
     fun checkExpiredTrials() {
@@ -3770,8 +3776,11 @@ class ScheduledJobs(
     // 30 günden eski okunmuş mesajları temizle
     @Scheduled(cron = "0 0 3 * * ?")  // Her gece 03:00
     fun cleanupOldMessages() {
-        tenantAwareScheduler.executeForAllTenants { _ ->
-            val cutoff = LocalDateTime.now().minusDays(30)
+        tenantAwareScheduler.executeForAllTenants { tenant ->
+            // DÜZELTME: Tenant timezone ile 30 gün öncesini hesapla
+            val settings = siteSettingsRepository.findByTenantId(tenant.id!!)
+            val tenantZone = ZoneId.of(settings?.timezone ?: "Europe/Istanbul")
+            val cutoff = ZonedDateTime.now(tenantZone).minusDays(30).toLocalDateTime()
             // Sadece okunmuş mesajları sil
             contactMessageRepository.deleteByIsReadTrueAndCreatedAtBefore(cutoff)
         }
@@ -3780,13 +3789,21 @@ class ScheduledJobs(
     // Randevu sonrası değerlendirme isteği gönder (24 saat sonra)
     @Scheduled(fixedRate = 3_600_000)  // Her saat
     fun sendReviewRequests() {
-        tenantAwareScheduler.executeForAllTenants { _ ->
-            val yesterday = LocalDateTime.now().minusHours(24)
+        tenantAwareScheduler.executeForAllTenants { tenant ->
+            // DÜZELTME: Tenant timezone ile "24 saat önce" hesapla
+            val settings = siteSettingsRepository.findByTenantId(tenant.id!!)
+            val tenantZone = ZoneId.of(settings?.timezone ?: "Europe/Istanbul")
+            val yesterday = ZonedDateTime.now(tenantZone).minusHours(24).toLocalDateTime()
+
             val completedAppointments = appointmentRepository
                 .findCompletedWithoutReview(yesterday)
 
             completedAppointments.forEach { appointment ->
-                notificationService.sendReviewRequest(appointment)
+                try {                                              // DÜZELTME: Per-appointment error handling
+                    notificationService.sendReviewRequest(appointment)
+                } catch (e: Exception) {
+                    logger.error("Değerlendirme isteği gönderilemedi — appointment={}", appointment.id, e)
+                }
             }
         }
     }
@@ -3813,9 +3830,8 @@ fun recoverSendEmail(e: NotificationDeliveryException, to: String, subject: Stri
     // NotificationLog'a FAILED olarak kaydet
 }
 
-// build.gradle.kts'e ekle:
-// implementation("org.springframework.retry:spring-retry")
-// implementation("org.springframework:spring-aspects")
+// Not: spring-retry + spring-boot-starter-aop zaten build.gradle.kts'te mevcut (Bölüm 9.2)
+// @EnableRetry annotation'ı bir @Configuration sınıfında aktifleştirilmeli
 ```
 
 ---
@@ -3865,18 +3881,18 @@ fun deleteMyAccount(): ApiResponse<Nothing> {
 ```kotlin
 @Entity
 @Table(name = "consent_records")
-class ConsentRecord {
+class ConsentRecord : TenantAwareEntity() {             // DÜZELTME: TenantAwareEntity extend
     @Id @GeneratedValue(strategy = GenerationType.UUID)
     val id: String? = null
     val userId: String = ""
-    val tenantId: String = ""
+    // tenantId → TenantAwareEntity'den miras alınır
 
     @Enumerated(EnumType.STRING)
     var consentType: ConsentType = ConsentType.TERMS_OF_SERVICE
 
     var isGranted: Boolean = false
-    var grantedAt: LocalDateTime? = null
-    var revokedAt: LocalDateTime? = null
+    var grantedAt: Instant? = null                       // DÜZELTME: LocalDateTime → Instant (UTC)
+    var revokedAt: Instant? = null                       // DÜZELTME: LocalDateTime → Instant
     var ipAddress: String? = null
 }
 
@@ -3986,6 +4002,8 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
+          --character-set-server=utf8mb4
+          --collation-server=utf8mb4_turkish_ci
 
     steps:
       - uses: actions/checkout@v4
@@ -3994,18 +4012,22 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
+      - name: Cache Gradle packages                    # DÜZELTME: Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/caches
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle.kts') }}
+          restore-keys: ${{ runner.os }}-gradle-
+
       - name: Build & Test
-        run: ./gradlew build
+        run: ./gradlew build                           # Flyway otomatik çalışır (spring.flyway.enabled=true)
         env:
           DB_HOST: localhost
           DB_PORT: 3306
           DB_NAME: aesthetic_test
           DB_USERNAME: root
           DB_PASSWORD: test
-          JWT_SECRET: test-secret-key-for-ci-pipeline
-
-      - name: Run Flyway Migrations
-        run: ./gradlew flywayMigrate
+          JWT_SECRET: test-secret-key-for-ci-pipeline-min-256-bits-long-enough
 
   docker:
     needs: test
@@ -4028,8 +4050,7 @@ jobs:
 ### 24.1 Prodüksiyon Docker Compose
 
 ```yaml
-version: '3.8'
-
+# Docker Compose V2 — 'version' alanı deprecated (Bölüm 10 ile tutarlı)
 services:
   app:
     image: registry.app.com/aesthetic-backend:latest
@@ -4098,7 +4119,7 @@ services:
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]  # DÜZELTME: Şifreli Redis
       interval: 10s
       timeout: 5s
       retries: 5
@@ -4151,7 +4172,7 @@ innodb_flush_log_at_trx_commit = 1
 innodb_lock_wait_timeout = 10          # Pessimistic lock timeout (saniye)
 max_connections = 200
 character-set-server = utf8mb4
-collation-server = utf8mb4_unicode_ci
+collation-server = utf8mb4_turkish_ci   # DÜZELTME: Bölüm 8 ile tutarlı (Türkçe İ/ı/Ş/ş sıralaması)
 ```
 
 ### 24.4 Veritabanı Yedekleme
@@ -4209,7 +4230,7 @@ server:
       max: 200
       min-spare: 20
 
-spring:
+  # DÜZELTME: Ayrı spring: bloğu kaldırıldı — yukarıdaki spring: altına taşındı
   lifecycle:
     timeout-per-shutdown-phase: 30s  # Shutdown'da max 30s bekle
 
