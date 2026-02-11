@@ -1926,12 +1926,14 @@ PATCH  /api/admin/services/{id}/sort         # Sıralama güncelle
 
 # Ürünler
 GET    /api/admin/products
+GET    /api/admin/products/{id}
 POST   /api/admin/products
 PUT    /api/admin/products/{id}
 DELETE /api/admin/products/{id}
 
 # Blog
 GET    /api/admin/blog
+GET    /api/admin/blog/{id}
 POST   /api/admin/blog
 PUT    /api/admin/blog/{id}
 DELETE /api/admin/blog/{id}
@@ -1939,9 +1941,15 @@ PATCH  /api/admin/blog/{id}/publish          # Yayınla/taslak yap
 
 # Galeri
 GET    /api/admin/gallery
+GET    /api/admin/gallery/{id}
 POST   /api/admin/gallery
 PUT    /api/admin/gallery/{id}
 DELETE /api/admin/gallery/{id}
+
+# Değerlendirmeler
+GET    /api/admin/reviews                    # Değerlendirme listesi
+PATCH  /api/admin/reviews/{id}/approve       # Onayla/reddet
+DELETE /api/admin/reviews/{id}               # Değerlendirme sil
 
 # Randevular
 GET    /api/admin/appointments               # Filtreli liste
@@ -1960,8 +1968,14 @@ PUT    /api/admin/patients/{id}              # Hasta bilgisi güncelle
 # İletişim Mesajları
 GET    /api/admin/messages                   # Mesaj listesi
 GET    /api/admin/messages/{id}              # Mesaj detayı
+GET    /api/admin/messages/unread-count      # Okunmamış mesaj sayısı (inbox badge)
 PATCH  /api/admin/messages/{id}/read         # Okundu işaretle
 DELETE /api/admin/messages/{id}              # Mesaj sil
+
+# Bildirim Yönetimi
+GET    /api/admin/notifications              # Bildirim geçmişi
+GET    /api/admin/notifications/templates    # Bildirim şablonları
+PUT    /api/admin/notifications/templates/{id}  # Şablon güncelle
 
 # Personel Yönetimi
 GET    /api/admin/staff                      # Personel listesi
@@ -2017,7 +2031,7 @@ data class ApiResponse<T>(
     val success: Boolean = true,
     val data: T? = null,
     val message: String? = null,
-    val timestamp: LocalDateTime = LocalDateTime.now()
+    val timestamp: Instant = Instant.now()       // UTC (timezone bağımsız)
 )
 
 // Sayfalı yanıt
@@ -2027,17 +2041,53 @@ data class PagedResponse<T>(
     val page: Int,
     val size: Int,
     val totalElements: Long,
-    val totalPages: Int
+    val totalPages: Int,
+    val message: String? = null,
+    val timestamp: Instant = Instant.now()       // ApiResponse ile tutarlı
 )
 
 // Hata yanıtı
 data class ErrorResponse(
     val success: Boolean = false,
     val error: String,
-    val code: String,           // "APPOINTMENT_CONFLICT", "VALIDATION_ERROR", vb.
+    val code: ErrorCode,                          // Enum (aşağıda tanımlı)
     val details: Map<String, String>? = null,
-    val timestamp: LocalDateTime = LocalDateTime.now()
+    val timestamp: Instant = Instant.now()
 )
+
+// Hata kodları enum'u — Tüm API'da tutarlı hata kodları
+enum class ErrorCode {
+    // Auth
+    INVALID_CREDENTIALS,          // Geçersiz e-posta veya şifre
+    ACCOUNT_LOCKED,               // Hesap kilitli
+    TOKEN_EXPIRED,                // Token süresi dolmuş
+    TOKEN_INVALID,                // Geçersiz token
+
+    // Tenant
+    TENANT_NOT_FOUND,             // Tenant bulunamadı
+    CROSS_TENANT_ACCESS,          // Cross-tenant erişim girişimi
+
+    // Resource
+    RESOURCE_NOT_FOUND,           // Kaynak bulunamadı
+    DUPLICATE_RESOURCE,           // Aynı kaynak zaten var
+
+    // Appointment
+    APPOINTMENT_CONFLICT,         // Zaman çakışması
+    APPOINTMENT_INVALID_STATUS,   // Geçersiz durum geçişi
+    APPOINTMENT_PAST_DATE,        // Geçmiş tarihe randevu
+    NO_AVAILABLE_STAFF,           // Müsait personel yok
+
+    // Validation
+    VALIDATION_ERROR,             // Bean validation hatası
+    INVALID_FILE_TYPE,            // Desteklenmeyen dosya türü
+    FILE_TOO_LARGE,               // Dosya boyutu aşıldı
+
+    // Rate Limiting
+    RATE_LIMIT_EXCEEDED,          // Çok fazla istek
+
+    // General
+    INTERNAL_ERROR                // Beklenmeyen hata
+}
 ```
 
 ---
@@ -2075,16 +2125,23 @@ Refresh Token (7 gün ömür, DB'de saklanır):
 ```kotlin
 // RefreshToken.kt — DB'de saklanan refresh token'lar
 @Entity
-@Table(name = "refresh_tokens")
+@Table(
+    name = "refresh_tokens",
+    indexes = [
+        Index(name = "idx_rt_user", columnList = "userId"),              // Kullanıcının tüm token'ları
+        Index(name = "idx_rt_family", columnList = "family"),            // Theft detection
+        Index(name = "idx_rt_expires", columnList = "expiresAt")         // Expired token temizliği
+    ]
+)
 class RefreshToken(
     @Id
     val id: String,                          // JWT'deki "jti" claim
     val userId: String,
     val tenantId: String,
     val family: String,                       // Token ailesi
-    val expiresAt: LocalDateTime,
+    val expiresAt: Instant,                  // UTC (timezone bağımsız)
     var isRevoked: Boolean = false,
-    val createdAt: LocalDateTime = LocalDateTime.now()
+    val createdAt: Instant = Instant.now()   // UTC
 )
 ```
 
@@ -2102,21 +2159,29 @@ class AuthService(
     private val userRepository: UserRepository,
     private val passwordEncoder: PasswordEncoder,
     private val jwtTokenProvider: JwtTokenProvider,
-    private val refreshTokenRepository: RefreshTokenRepository
+    private val refreshTokenRepository: RefreshTokenRepository,
+    private val settingsRepository: SiteSettingsRepository
 ) {
     companion object {
+        private val logger = LoggerFactory.getLogger(AuthService::class.java)
         const val MAX_FAILED_ATTEMPTS = 5
         const val LOCK_DURATION_MINUTES = 15L
     }
 
     @Transactional
     fun login(request: LoginRequest): TokenResponse {
-        val user = userRepository.findByEmailAndTenantId(request.email, TenantContext.getTenantId())
+        val tenantId = TenantContext.getTenantId()
+        val user = userRepository.findByEmailAndTenantId(request.email, tenantId)
             ?: throw UnauthorizedException("Geçersiz e-posta veya şifre")
 
         // Hesap kilitli mi kontrol et
-        if (user.lockedUntil != null && user.lockedUntil!!.isAfter(LocalDateTime.now())) {
-            val remainingMinutes = Duration.between(LocalDateTime.now(), user.lockedUntil).toMinutes()
+        // KRİTİK: Tenant timezone kullan (sunucu timezone'u değil!)
+        val settings = settingsRepository.findByTenantId(tenantId)
+        val tenantZone = ZoneId.of(settings?.timezone ?: "Europe/Istanbul")
+        val now = ZonedDateTime.now(tenantZone).toLocalDateTime()
+
+        if (user.lockedUntil != null && user.lockedUntil!!.isAfter(now)) {
+            val remainingMinutes = Duration.between(now, user.lockedUntil).toMinutes()
             throw AccountLockedException(
                 "Hesabınız çok fazla başarısız giriş denemesi nedeniyle kilitlendi. " +
                 "$remainingMinutes dakika sonra tekrar deneyin."
@@ -2127,9 +2192,9 @@ class AuthService(
         if (!passwordEncoder.matches(request.password, user.passwordHash)) {
             user.failedLoginAttempts++
             if (user.failedLoginAttempts >= MAX_FAILED_ATTEMPTS) {
-                user.lockedUntil = LocalDateTime.now().plusMinutes(LOCK_DURATION_MINUTES)
+                user.lockedUntil = now.plusMinutes(LOCK_DURATION_MINUTES)
                 logger.warn("[tenant={}] Hesap kilitlendi: {} ({} başarısız deneme)",
-                    TenantContext.getTenantId(), user.email, user.failedLoginAttempts)
+                    tenantId, user.email, user.failedLoginAttempts)
             }
             userRepository.save(user)
             throw UnauthorizedException("Geçersiz e-posta veya şifre")
@@ -2147,7 +2212,7 @@ class AuthService(
 }
 ```
 
-### 7.2 Spring Security Konfigürasyonu
+### 7.3 Spring Security Konfigürasyonu
 
 ```kotlin
 @Configuration
@@ -2160,6 +2225,8 @@ class SecurityConfig(
     @Bean
     fun securityFilterChain(http: HttpSecurity): SecurityFilterChain {
         http
+            // CSRF devre dışı: REST API, JWT token-based auth kullanır.
+            // CSRF koruması session-based auth için gereklidir, stateless API'da gereksizdir.
             .csrf { it.disable() }
             .cors { it.configurationSource(corsConfigSource()) }
             .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
@@ -2169,8 +2236,13 @@ class SecurityConfig(
                 auth
                     // Public endpoints
                     .requestMatchers("/api/public/**").permitAll()
-                    .requestMatchers("/api/auth/login", "/api/auth/register").permitAll()
-                    .requestMatchers("/api/auth/forgot-password", "/api/auth/reset-password").permitAll()
+                    .requestMatchers(
+                        "/api/auth/login",
+                        "/api/auth/register",
+                        "/api/auth/refresh",              // DÜZELTME: Refresh de permitAll olmalı!
+                        "/api/auth/forgot-password",
+                        "/api/auth/reset-password"
+                    ).permitAll()
                     .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
                     // Platform admin
                     .requestMatchers("/api/platform/**").hasRole("PLATFORM_ADMIN")
@@ -2183,21 +2255,33 @@ class SecurityConfig(
         return http.build()
     }
 
+    /**
+     * CORS konfigürasyonu — Dinamik origin desteği.
+     * Tüm tenant subdomain'leri + custom domain'ler desteklenir.
+     */
     @Bean
-    fun corsConfigSource(): CorsConfigurationSource {
-        val config = CorsConfiguration()
-        config.allowedOriginPatterns = listOf(
-            "https://*.app.com",        // Tüm tenant subdomain'leri
-            "http://localhost:3000"       // Geliştirme
-        )
-        config.allowedMethods = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
-        config.allowedHeaders = listOf("*")
-        config.allowCredentials = true
-        config.maxAge = 3600
+    fun corsConfigSource(tenantRepository: TenantRepository): CorsConfigurationSource {
+        return UrlBasedCorsConfigurationSource().apply {
+            registerCorsConfiguration("/**", CorsConfiguration().apply {
+                // Statik pattern'lar
+                allowedOriginPatterns = mutableListOf(
+                    "https://*.app.com",        // Tüm tenant subdomain'leri
+                    "http://localhost:3000"      // Geliştirme
+                )
 
-        val source = UrlBasedCorsConfigurationSource()
-        source.registerCorsConfiguration("/**", config)
-        return source
+                // DÜZELTME: Custom domain desteği
+                // Tenant'ların kayıtlı custom domain'lerini de CORS origin olarak ekle
+                val customDomains = tenantRepository.findAllCustomDomains()
+                customDomains.forEach { domain ->
+                    allowedOriginPatterns!!.add("https://$domain")
+                }
+
+                allowedMethods = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+                allowedHeaders = listOf("*")
+                allowCredentials = true
+                maxAge = 3600
+            })
+        }
     }
 
     @Bean
@@ -2205,7 +2289,7 @@ class SecurityConfig(
 }
 ```
 
-### 7.3 Rate Limiting
+### 7.4 Rate Limiting
 
 ```kotlin
 // RateLimitConfig.kt — Bucket4j ile rate limiting
@@ -2220,19 +2304,60 @@ class RateLimitConfig {
     }
 }
 
-// Endpoint bazlı rate limit kuralları:
-// /api/auth/login        → 5 istek / dakika / IP (brute force koruması)
-// /api/public/contact    → 3 istek / dakika / IP (spam koruması)
-// /api/public/appointments → 10 istek / dakika / IP
-// /api/admin/upload      → 20 istek / dakika / tenant
-// /api/admin/**          → 100 istek / dakika / tenant
-// /api/public/**         → 200 istek / dakika / IP
+// RateLimitFilter.kt — Endpoint bazlı rate limiting
+class RateLimitFilter : OncePerRequestFilter() {
+
+    // IP bazlı bucket'lar (ConcurrentHashMap + Caffeine eviction ile)
+    private val ipBuckets: Cache<String, Bucket> = Caffeine.newBuilder()
+        .maximumSize(10_000)
+        .expireAfterAccess(Duration.ofMinutes(5))
+        .build()
+
+    // Endpoint bazlı rate limit kuralları
+    private val rules = listOf(
+        RateLimitRule("/api/auth/login",         5,  Duration.ofMinutes(1)),   // Brute force koruması
+        RateLimitRule("/api/public/contact",     3,  Duration.ofMinutes(1)),   // Spam koruması
+        RateLimitRule("/api/public/appointments", 10, Duration.ofMinutes(1)),
+        RateLimitRule("/api/admin/upload",        20, Duration.ofMinutes(1)),
+        RateLimitRule("/api/admin/",             100, Duration.ofMinutes(1)),
+        RateLimitRule("/api/public/",            200, Duration.ofMinutes(1))
+    )
+
+    override fun doFilterInternal(
+        request: HttpServletRequest,
+        response: HttpServletResponse,
+        filterChain: FilterChain
+    ) {
+        val clientIp = request.remoteAddr
+        val uri = request.requestURI
+        val rule = rules.firstOrNull { uri.startsWith(it.pathPrefix) } ?: run {
+            filterChain.doFilter(request, response)
+            return
+        }
+
+        val bucket = ipBuckets.get("$clientIp:${rule.pathPrefix}") {
+            Bucket.builder()
+                .addLimit(Bandwidth.simple(rule.limit.toLong(), rule.window))
+                .build()
+        }
+
+        if (bucket.tryConsume(1)) {
+            filterChain.doFilter(request, response)
+        } else {
+            response.status = 429
+            response.contentType = "application/json"
+            response.writer.write("""{"success":false,"error":"Çok fazla istek","code":"RATE_LIMIT_EXCEEDED"}""")
+        }
+    }
+
+    data class RateLimitRule(val pathPrefix: String, val limit: Int, val window: Duration)
+}
 
 // build.gradle.kts'e ekle:
 // implementation("com.bucket4j:bucket4j-core:8.10.1")
 ```
 
-### 7.4 Dosya Yükleme Güvenliği
+### 7.5 Dosya Yükleme Güvenliği
 
 ```kotlin
 @Service
@@ -2263,14 +2388,21 @@ class SecureFileUploadService(
             )
         }
 
+        // KRİTİK DÜZELTME: inputStream SADECE BİR KEZ okunabilir!
+        // Birden fazla işlem için file.bytes kullanılmalı.
+        val fileBytes = file.bytes
+
         // 3. MIME type kontrolü (content sniffing — uzantıya güvenme)
-        val detectedType = detectMimeType(file.inputStream)
+        // Apache Tika kütüphanesi ile gerçek dosya içeriğinden MIME type tespit et
+        // build.gradle.kts: implementation("org.apache.tika:tika-core:2.9.1")
+        val tika = Tika()
+        val detectedType = tika.detect(fileBytes)
         if (detectedType !in ALLOWED_CONTENT_TYPES) {
             throw SecurityException("Dosya içeriği beyan edilen türle uyuşmuyor")
         }
 
         // 4. Görsel boyut kontrolü (decompression bomb koruması)
-        val image = ImageIO.read(file.inputStream)
+        val image = ImageIO.read(ByteArrayInputStream(fileBytes))
             ?: throw IllegalArgumentException("Geçersiz görsel dosyası")
         if (image.width > MAX_IMAGE_DIMENSION || image.height > MAX_IMAGE_DIMENSION) {
             throw IllegalArgumentException("Görsel boyutu ${MAX_IMAGE_DIMENSION}x${MAX_IMAGE_DIMENSION}'den büyük olamaz")
@@ -2282,14 +2414,14 @@ class SecureFileUploadService(
         val path = "tenants/$tenantId/$directory/$safeName"
 
         // 6. Yükle (ayrı domain'den servis edilmeli — XSS koruması)
-        return storageProvider.upload(file.inputStream, path, detectedType)
+        return storageProvider.upload(ByteArrayInputStream(fileBytes), path, detectedType)
     }
 }
 ```
 
 > **GÜVENLİK NOTU:** Yüklenen dosyalar **ayrı bir domain**'den (örn: `cdn.app.com`) servis edilmelidir. Ana domain'den servis edilirse, SVG/HTML dosyaları XSS saldırısı vektörü olur.
 
-### 7.5 Rol Tabanlı Erişim Kontrolü
+### 7.6 Rol Tabanlı Erişim Kontrolü
 
 ```kotlin
 // Controller'da kullanım
