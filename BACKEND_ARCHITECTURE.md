@@ -733,10 +733,10 @@ class Tenant(
     var isActive: Boolean = true,
 
     @CreationTimestamp
-    val createdAt: LocalDateTime? = null,
+    val createdAt: Instant? = null,              // DÜZELTME: LocalDateTime → Instant (UTC)
 
     @UpdateTimestamp
-    var updatedAt: LocalDateTime? = null
+    var updatedAt: Instant? = null               // DÜZELTME: LocalDateTime → Instant (UTC)
 )
 
 enum class BusinessType {
@@ -789,13 +789,13 @@ class User : TenantAwareEntity() {
 
     // Güvenlik: başarısız giriş denemesi sayacı (brute force koruması)
     var failedLoginAttempts: Int = 0
-    var lockedUntil: LocalDateTime? = null
+    var lockedUntil: Instant? = null               // DÜZELTME: LocalDateTime → Instant (UTC)
 
     @CreationTimestamp
-    val createdAt: LocalDateTime? = null
+    val createdAt: Instant? = null                 // DÜZELTME: LocalDateTime → Instant (UTC)
 
     @UpdateTimestamp
-    var updatedAt: LocalDateTime? = null
+    var updatedAt: Instant? = null                 // DÜZELTME: LocalDateTime → Instant (UTC)
 
     // İlişkiler
     @OneToMany(mappedBy = "client", fetch = FetchType.LAZY)
@@ -841,7 +841,7 @@ class ClientNote : TenantAwareEntity() {
     var content: String = ""          // "Lateks alerjisi var", "Sol omuz hassas"
 
     @CreationTimestamp
-    val createdAt: LocalDateTime? = null
+    val createdAt: Instant? = null               // DÜZELTME: LocalDateTime → Instant (UTC)
 }
 ```
 
@@ -907,10 +907,10 @@ class Service : TenantAwareEntity() {
     var ogImage: String? = null
 
     @CreationTimestamp
-    val createdAt: LocalDateTime? = null
+    val createdAt: Instant? = null                 // DÜZELTME: LocalDateTime → Instant (UTC)
 
     @UpdateTimestamp
-    var updatedAt: LocalDateTime? = null
+    var updatedAt: Instant? = null                 // DÜZELTME: LocalDateTime → Instant (UTC)
 }
 
 // ServiceCategory.kt — Hizmet kategorileri
@@ -935,8 +935,8 @@ class ServiceCategory : TenantAwareEntity() {
     @OneToMany(mappedBy = "category", fetch = FetchType.LAZY)
     val services: MutableList<Service> = mutableListOf()
 
-    @CreationTimestamp val createdAt: LocalDateTime? = null
-    @UpdateTimestamp var updatedAt: LocalDateTime? = null
+    @CreationTimestamp val createdAt: Instant? = null   // DÜZELTME: LocalDateTime → Instant (UTC)
+    @UpdateTimestamp var updatedAt: Instant? = null     // DÜZELTME: LocalDateTime → Instant (UTC)
 }
 ```
 
@@ -1002,7 +1002,7 @@ class Appointment : TenantAwareEntity() {
     var status: AppointmentStatus = AppointmentStatus.PENDING
 
     // İptal bilgisi
-    var cancelledAt: LocalDateTime? = null
+    var cancelledAt: Instant? = null               // DÜZELTME: LocalDateTime → Instant (UTC)
     var cancellationReason: String? = null
 
     // Tekrarlayan randevu desteği
@@ -1014,10 +1014,10 @@ class Appointment : TenantAwareEntity() {
     var reminder1hSent: Boolean = false
 
     @CreationTimestamp
-    val createdAt: LocalDateTime? = null
+    val createdAt: Instant? = null                 // DÜZELTME: LocalDateTime → Instant (UTC)
 
     @UpdateTimestamp
-    var updatedAt: LocalDateTime? = null
+    var updatedAt: Instant? = null                 // DÜZELTME: LocalDateTime → Instant (UTC)
 
     // Optimistic locking — concurrent update koruması
     @Version
@@ -1172,8 +1172,8 @@ class Product : TenantAwareEntity() {
     var sortOrder: Int = 0
     var metaTitle: String? = null
     var metaDescription: String? = null
-    @CreationTimestamp val createdAt: LocalDateTime? = null
-    @UpdateTimestamp var updatedAt: LocalDateTime? = null
+    @CreationTimestamp val createdAt: Instant? = null   // DÜZELTME: LocalDateTime → Instant (UTC)
+    @UpdateTimestamp var updatedAt: Instant? = null     // DÜZELTME: LocalDateTime → Instant (UTC)
 }
 
 // BlogPost.kt
@@ -1205,11 +1205,11 @@ class BlogPost : TenantAwareEntity() {
     var tags: MutableList<String> = mutableListOf()
     var readTime: String = ""
     var isPublished: Boolean = false
-    var publishedAt: LocalDateTime? = null
+    var publishedAt: Instant? = null               // DÜZELTME: LocalDateTime → Instant (UTC)
     var metaTitle: String? = null
     var metaDescription: String? = null
-    @CreationTimestamp val createdAt: LocalDateTime? = null
-    @UpdateTimestamp var updatedAt: LocalDateTime? = null
+    @CreationTimestamp val createdAt: Instant? = null   // DÜZELTME: LocalDateTime → Instant (UTC)
+    @UpdateTimestamp var updatedAt: Instant? = null     // DÜZELTME: LocalDateTime → Instant (UTC)
 }
 
 // GalleryItem.kt
@@ -1229,7 +1229,7 @@ class GalleryItem : TenantAwareEntity() {
     var afterImage: String = ""
     var description: String = ""
     var isActive: Boolean = true
-    @CreationTimestamp val createdAt: LocalDateTime? = null
+    @CreationTimestamp val createdAt: Instant? = null   // DÜZELTME: LocalDateTime → Instant (UTC)
 }
 
 // ContactMessage.kt
@@ -1244,8 +1244,8 @@ class ContactMessage : TenantAwareEntity() {
     var subject: String = ""
     @Column(columnDefinition = "TEXT") var message: String = ""
     var isRead: Boolean = false
-    var repliedAt: LocalDateTime? = null      // Yanıtlanma durumu
-    @CreationTimestamp val createdAt: LocalDateTime? = null
+    var repliedAt: Instant? = null                 // DÜZELTME: LocalDateTime → Instant (UTC)
+    @CreationTimestamp val createdAt: Instant? = null   // DÜZELTME: LocalDateTime → Instant (UTC)
 }
 
 // SiteSettings.kt — workingHoursJson KALDIRILDI (WorkingHours entity'si kullanılıyor)
@@ -1301,7 +1301,7 @@ class Review : TenantAwareEntity() {
     var comment: String? = null
     var isApproved: Boolean = false             // Admin onayı gerekli
     var isPublic: Boolean = true               // Herkese açık mı
-    @CreationTimestamp val createdAt: LocalDateTime? = null
+    @CreationTimestamp val createdAt: Instant? = null   // DÜZELTME: LocalDateTime → Instant (UTC)
 }
 ```
 
@@ -2177,6 +2177,73 @@ enum class ErrorCode {
 }
 ```
 
+### 6.2 Request/Response DTO Tanımları
+
+```kotlin
+// ── Request DTO'ları ── (Controller'a gelen istekler)
+
+data class CreateAppointmentRequest(
+    @field:NotNull val date: LocalDate,
+    @field:NotNull val startTime: LocalTime,
+    @field:NotBlank val clientName: String,
+    @field:Email val clientEmail: String,
+    val clientPhone: String = "",
+    @field:NotEmpty val serviceIds: List<String>,  // Çoklu hizmet desteği
+    val staffId: String? = null,                   // null = otomatik atama
+    val notes: String? = null,
+    val recurrenceRule: String? = null              // WEEKLY, BIWEEKLY, MONTHLY (opsiyonel)
+)
+
+data class CreateServiceRequest(
+    @field:NotBlank val title: String,
+    @field:NotBlank val slug: String,
+    val categoryId: String? = null,
+    val shortDescription: String = "",
+    val description: String = "",
+    @field:PositiveOrZero val price: BigDecimal = BigDecimal.ZERO,
+    val currency: String = "TRY",
+    @field:Min(5) @field:Max(480) val durationMinutes: Int = 30,
+    @field:Min(0) val bufferMinutes: Int = 0,
+    val image: String? = null,
+    val benefits: List<String> = emptyList(),
+    val processSteps: List<String> = emptyList(),
+    val recovery: String? = null,
+    val metaTitle: String? = null,
+    val metaDescription: String? = null
+)
+
+// ── Response DTO'ları ── (API'dan dönen yanıtlar — entity doğrudan dönmez!)
+
+data class ServiceResponse(
+    val id: String,
+    val slug: String,
+    val title: String,
+    val categoryName: String?,
+    val shortDescription: String,
+    val price: BigDecimal,
+    val currency: String,
+    val durationMinutes: Int,
+    val image: String?,
+    val isActive: Boolean
+)
+
+data class AppointmentResponse(
+    val id: String,
+    val clientName: String,
+    val services: List<String>,      // Hizmet adları
+    val staffName: String?,
+    val date: LocalDate,
+    val startTime: LocalTime,
+    val endTime: LocalTime,
+    val totalPrice: BigDecimal,
+    val status: AppointmentStatus,
+    val createdAt: Instant?
+)
+
+// Not: Her entity için ayrı Request/Response DTO oluşturulur.
+// Entity doğrudan API'dan ASLA dönülmez (güvenlik: hassas alanlar sızar).
+```
+
 ---
 
 ## 7. Güvenlik Mimarisi
@@ -2370,6 +2437,9 @@ class SecurityConfig(
                 maxAge = 3600
             })
         }
+        // DÜZELTME NOTU: Custom domain eklendiğinde CORS listesi yenilenmez.
+        // Çözüm: Periyodik @Scheduled job ile CorsConfigurationSource'u yeniden oluştur
+        // veya CachingCorsConfigurationSource (TTL: 5dk) implementasyonu yapın.
     }
 
     @Bean
@@ -2402,13 +2472,18 @@ class RateLimitFilter : OncePerRequestFilter() {
         .build()
 
     // Endpoint bazlı rate limit kuralları
+    // KRİTİK: Spesifik kurallar ÖNCE listelenmeli! firstOrNull() ilk eşleşeni döndürür.
+    // Genel prefix kuralları sona konur, aksi halde /api/auth/login → /api/public/ kuralına düşer.
     private val rules = listOf(
-        RateLimitRule("/api/auth/login",         5,  Duration.ofMinutes(1)),   // Brute force koruması
-        RateLimitRule("/api/public/contact",     3,  Duration.ofMinutes(1)),   // Spam koruması
-        RateLimitRule("/api/public/appointments", 10, Duration.ofMinutes(1)),
-        RateLimitRule("/api/admin/upload",        20, Duration.ofMinutes(1)),
-        RateLimitRule("/api/admin/",             100, Duration.ofMinutes(1)),
-        RateLimitRule("/api/public/",            200, Duration.ofMinutes(1))
+        RateLimitRule("/api/auth/login",            5,  Duration.ofMinutes(1)),   // Brute force koruması
+        RateLimitRule("/api/auth/register",          5,  Duration.ofMinutes(1)),   // DÜZELTME: Register rate limit
+        RateLimitRule("/api/auth/refresh",           20, Duration.ofMinutes(1)),   // DÜZELTME: Refresh rate limit
+        RateLimitRule("/api/auth/forgot-password",   3,  Duration.ofMinutes(1)),   // DÜZELTME: Password reset spam koruması
+        RateLimitRule("/api/public/contact",         3,  Duration.ofMinutes(1)),   // Spam koruması
+        RateLimitRule("/api/public/appointments",   10, Duration.ofMinutes(1)),
+        RateLimitRule("/api/admin/upload",           20, Duration.ofMinutes(1)),
+        RateLimitRule("/api/admin/",               100, Duration.ofMinutes(1)),   // Genel admin
+        RateLimitRule("/api/public/",              200, Duration.ofMinutes(1))    // Genel public
     )
 
     override fun doFilterInternal(
@@ -2416,7 +2491,9 @@ class RateLimitFilter : OncePerRequestFilter() {
         response: HttpServletResponse,
         filterChain: FilterChain
     ) {
-        val clientIp = request.remoteAddr
+        // DÜZELTME: Proxy arkasında gerçek IP'yi al (X-Forwarded-For header)
+        val clientIp = request.getHeader("X-Forwarded-For")?.split(",")?.firstOrNull()?.trim()
+            ?: request.remoteAddr
         val uri = request.requestURI
         val rule = rules.firstOrNull { uri.startsWith(it.pathPrefix) } ?: run {
             filterChain.doFilter(request, response)
@@ -2448,6 +2525,10 @@ class RateLimitFilter : OncePerRequestFilter() {
 ### 7.5 Dosya Yükleme Güvenliği
 
 ```kotlin
+import org.apache.tika.Tika                              // DÜZELTME: Eksik import eklendi
+import javax.imageio.ImageIO                              // DÜZELTME: Eksik import eklendi
+import java.io.ByteArrayInputStream
+
 @Service
 class SecureFileUploadService(
     private val storageProvider: StorageProvider   // S3 veya MinIO
@@ -2509,6 +2590,49 @@ class SecureFileUploadService(
 
 > **GÜVENLİK NOTU:** Yüklenen dosyalar **ayrı bir domain**'den (örn: `cdn.app.com`) servis edilmelidir. Ana domain'den servis edilirse, SVG/HTML dosyaları XSS saldırısı vektörü olur.
 
+### 7.5.1 StorageProvider Interface
+
+```kotlin
+import java.io.InputStream
+
+/** Dosya depolama soyutlaması — Local, S3, MinIO implementasyonları değiştirilebilir */
+interface StorageProvider {
+    fun upload(inputStream: InputStream, path: String, contentType: String): String
+    fun delete(path: String)
+    fun getUrl(path: String): String
+}
+
+/**
+ * Local dosya sistemi implementasyonu (development ortamı için).
+ * Prodüksiyonda S3 veya MinIO tercih edilmeli.
+ */
+@Service
+@Profile("dev")
+class LocalStorageProvider(
+    @Value("\${storage.local.base-path:/tmp/aesthetic-uploads}")
+    private val basePath: String,
+    @Value("\${storage.local.base-url:http://localhost:8080/uploads}")
+    private val baseUrl: String
+) : StorageProvider {
+
+    override fun upload(inputStream: InputStream, path: String, contentType: String): String {
+        val file = Path.of(basePath, path).toFile()
+        file.parentFile.mkdirs()
+        inputStream.use { it.copyTo(file.outputStream()) }
+        return getUrl(path)
+    }
+
+    override fun delete(path: String) {
+        Path.of(basePath, path).toFile().delete()
+    }
+
+    override fun getUrl(path: String): String = "$baseUrl/$path"
+}
+
+// Not: S3StorageProvider prodüksiyon implementasyonu ayrı bean olarak tanımlanır.
+// @Service @Profile("prod") class S3StorageProvider(...) : StorageProvider { ... }
+```
+
 ### 7.6 Rol Tabanlı Erişim Kontrolü
 
 ```kotlin
@@ -2535,6 +2659,90 @@ class ServiceController(private val serviceService: ServiceManagementService) {
         // Sadece TENANT_ADMIN silebilir
     }
 }
+```
+
+### 7.7 GlobalExceptionHandler
+
+```kotlin
+@RestControllerAdvice
+class GlobalExceptionHandler {
+
+    private val logger = LoggerFactory.getLogger(GlobalExceptionHandler::class.java)
+
+    /** 400 — Validation hataları (Zod/Jakarta) */
+    @ExceptionHandler(MethodArgumentNotValidException::class)
+    fun handleValidation(ex: MethodArgumentNotValidException): ResponseEntity<ApiResponse<Nothing>> {
+        val errors = ex.bindingResult.fieldErrors.associate { it.field to (it.defaultMessage ?: "Geçersiz değer") }
+        return ResponseEntity.badRequest().body(
+            ApiResponse(success = false, error = "Doğrulama hatası", details = errors)
+        )
+    }
+
+    /** 400 — İş kuralı ihlali */
+    @ExceptionHandler(IllegalArgumentException::class)
+    fun handleBadRequest(ex: IllegalArgumentException): ResponseEntity<ApiResponse<Nothing>> {
+        return ResponseEntity.badRequest().body(
+            ApiResponse(success = false, error = ex.message ?: "Geçersiz istek")
+        )
+    }
+
+    /** 401 — Yetkisiz erişim */
+    @ExceptionHandler(AuthenticationException::class)
+    fun handleAuth(ex: AuthenticationException): ResponseEntity<ApiResponse<Nothing>> {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+            ApiResponse(success = false, error = "Kimlik doğrulama başarısız")
+        )
+    }
+
+    /** 403 — Yetersiz yetki */
+    @ExceptionHandler(AccessDeniedException::class)
+    fun handleForbidden(ex: AccessDeniedException): ResponseEntity<ApiResponse<Nothing>> {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(
+            ApiResponse(success = false, error = "Bu işlem için yetkiniz yok")
+        )
+    }
+
+    /** 404 — Kaynak bulunamadı */
+    @ExceptionHandler(EntityNotFoundException::class)
+    fun handleNotFound(ex: EntityNotFoundException): ResponseEntity<ApiResponse<Nothing>> {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+            ApiResponse(success = false, error = ex.message ?: "Kayıt bulunamadı")
+        )
+    }
+
+    /** 409 — Çakışma (aynı slota iki randevu, tekrarlanan slug vb.) */
+    @ExceptionHandler(DataIntegrityViolationException::class)
+    fun handleConflict(ex: DataIntegrityViolationException): ResponseEntity<ApiResponse<Nothing>> {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(
+            ApiResponse(success = false, error = "Veri çakışması — bu kayıt zaten mevcut olabilir")
+        )
+    }
+
+    /** 429 — Plan limiti aşıldı */
+    @ExceptionHandler(PlanLimitExceededException::class)
+    fun handlePlanLimit(ex: PlanLimitExceededException): ResponseEntity<ApiResponse<Nothing>> {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(
+            ApiResponse(success = false, error = ex.message ?: "Plan limiti aşıldı")
+        )
+    }
+
+    /** 500 — Beklenmeyen hatalar */
+    @ExceptionHandler(Exception::class)
+    fun handleGeneral(ex: Exception): ResponseEntity<ApiResponse<Nothing>> {
+        logger.error("Beklenmeyen hata", ex)
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
+            ApiResponse(success = false, error = "Sunucu hatası — lütfen tekrar deneyin")
+        )
+    }
+}
+
+/** Standart API yanıt sarmalayıcı */
+data class ApiResponse<T>(
+    val success: Boolean,
+    val data: T? = null,
+    val error: String? = null,
+    val details: Any? = null
+)
 ```
 
 ---
@@ -2682,6 +2890,28 @@ CREATE TABLE tenants (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
 
+-- V2__create_user_table.sql
+CREATE TABLE users (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    phone VARCHAR(20),
+    image VARCHAR(500),
+    role ENUM('PLATFORM_ADMIN','TENANT_ADMIN','STAFF','CLIENT') NOT NULL DEFAULT 'CLIENT',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    failed_login_attempts INT NOT NULL DEFAULT 0,
+    locked_until TIMESTAMP(6) NULL,
+    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    UNIQUE INDEX uk_user_email_tenant (email, tenant_id),
+    INDEX idx_user_tenant_role (tenant_id, role),
+    INDEX idx_user_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
 -- V3__create_service_tables.sql
 CREATE TABLE service_categories (                -- DÜZELTME: Eksik tablo eklendi
     id VARCHAR(36) NOT NULL PRIMARY KEY,
@@ -2697,6 +2927,130 @@ CREATE TABLE service_categories (                -- DÜZELTME: Eksik tablo eklen
 
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
     UNIQUE KEY uk_category_slug_tenant (slug, tenant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+-- V4__create_service_table.sql
+CREATE TABLE services (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    slug VARCHAR(200) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    category_id VARCHAR(36),
+    short_description VARCHAR(500) DEFAULT '',
+    description TEXT DEFAULT '',
+    price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    currency VARCHAR(3) NOT NULL DEFAULT 'TRY',
+    duration_minutes INT NOT NULL DEFAULT 30,
+    buffer_minutes INT NOT NULL DEFAULT 0,
+    image VARCHAR(500),
+    recovery TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    sort_order INT DEFAULT 0,
+    meta_title VARCHAR(255),
+    meta_description VARCHAR(500),
+    og_image VARCHAR(500),
+    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    FOREIGN KEY (category_id) REFERENCES service_categories(id) ON DELETE SET NULL,
+    UNIQUE KEY uk_service_slug_tenant (slug, tenant_id),
+    INDEX idx_service_tenant (tenant_id),
+    INDEX idx_service_category (tenant_id, category_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+-- ElementCollection tabloları (service_benefits + service_process_steps)
+CREATE TABLE service_benefits (
+    service_id VARCHAR(36) NOT NULL,
+    benefit VARCHAR(500) NOT NULL,
+    FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+CREATE TABLE service_process_steps (
+    service_id VARCHAR(36) NOT NULL,
+    step VARCHAR(500) NOT NULL,
+    FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+-- V5__create_product_table.sql
+CREATE TABLE products (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    slug VARCHAR(200) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    brand VARCHAR(255) DEFAULT '',
+    category VARCHAR(100) DEFAULT '',
+    description TEXT DEFAULT '',
+    price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    currency VARCHAR(3) NOT NULL DEFAULT 'TRY',
+    image VARCHAR(500),
+    stock_quantity INT,                                    -- NULL = stok takibi yok
+    low_stock_threshold INT NOT NULL DEFAULT 5,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    sort_order INT DEFAULT 0,
+    meta_title VARCHAR(255),
+    meta_description VARCHAR(500),
+    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    UNIQUE KEY uk_product_slug_tenant (slug, tenant_id),
+    INDEX idx_product_tenant (tenant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+CREATE TABLE product_features (
+    product_id VARCHAR(36) NOT NULL,
+    feature VARCHAR(500) NOT NULL,
+    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+-- V6__create_blog_and_gallery_tables.sql
+CREATE TABLE blog_posts (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    slug VARCHAR(200) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    excerpt TEXT DEFAULT '',
+    content LONGTEXT DEFAULT '',
+    author_id VARCHAR(36),
+    category VARCHAR(100) DEFAULT '',
+    image VARCHAR(500),
+    read_time VARCHAR(50) DEFAULT '',
+    is_published BOOLEAN NOT NULL DEFAULT FALSE,
+    published_at TIMESTAMP(6) NULL,
+    meta_title VARCHAR(255),
+    meta_description VARCHAR(500),
+    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE SET NULL,
+    UNIQUE KEY uk_blog_slug_tenant (slug, tenant_id),
+    INDEX idx_blog_tenant (tenant_id),
+    INDEX idx_blog_published (tenant_id, is_published)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+CREATE TABLE blog_post_tags (
+    blog_post_id VARCHAR(36) NOT NULL,
+    tag VARCHAR(100) NOT NULL,
+    FOREIGN KEY (blog_post_id) REFERENCES blog_posts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+CREATE TABLE gallery_items (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    category VARCHAR(100) DEFAULT '',
+    service_id VARCHAR(36),
+    before_image VARCHAR(500) NOT NULL,
+    after_image VARCHAR(500) NOT NULL,
+    description VARCHAR(500) DEFAULT '',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE SET NULL,
+    INDEX idx_gallery_tenant (tenant_id),
+    INDEX idx_gallery_category (tenant_id, category)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
 
 -- V7__create_appointment_tables.sql
@@ -2733,6 +3087,8 @@ CREATE TABLE appointments (
     FOREIGN KEY (staff_id) REFERENCES users(id) ON DELETE SET NULL,
 
     INDEX idx_appt_conflict (tenant_id, staff_id, date, start_time, end_time, status),
+    INDEX idx_appt_tenant_date (tenant_id, date),      -- DÜZELTME: Entity'deki eksik index eklendi
+    INDEX idx_appt_status (tenant_id, status),          -- DÜZELTME: Entity'deki eksik index eklendi
     INDEX idx_appt_client (tenant_id, client_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
 
@@ -2783,6 +3139,46 @@ CREATE TABLE blocked_time_slots (
     FOREIGN KEY (staff_id) REFERENCES users(id) ON DELETE CASCADE,
 
     INDEX idx_blocked_slot (tenant_id, staff_id, date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+-- V8__create_contact_table.sql
+CREATE TABLE contact_messages (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    phone VARCHAR(20),
+    subject VARCHAR(255) DEFAULT '',
+    message TEXT NOT NULL,
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    replied_at TIMESTAMP(6) NULL,
+    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    INDEX idx_contact_tenant (tenant_id),
+    INDEX idx_contact_read (tenant_id, is_read)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+-- V9__create_settings_table.sql
+CREATE TABLE site_settings (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL UNIQUE,         -- Her tenant'ın tek bir settings kaydı
+    site_name VARCHAR(255) DEFAULT '',
+    phone VARCHAR(20) DEFAULT '',
+    email VARCHAR(255) DEFAULT '',
+    address TEXT DEFAULT '',
+    whatsapp VARCHAR(20) DEFAULT '',
+    instagram VARCHAR(255) DEFAULT '',
+    facebook VARCHAR(255) DEFAULT '',
+    twitter VARCHAR(255) DEFAULT '',
+    youtube VARCHAR(255) DEFAULT '',
+    map_embed_url VARCHAR(1000) DEFAULT '',
+    timezone VARCHAR(50) DEFAULT 'Europe/Istanbul',
+    locale VARCHAR(10) DEFAULT 'tr',
+    cancellation_policy_hours INT NOT NULL DEFAULT 24,
+    theme_settings JSON DEFAULT ('{}'),
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
 
 -- V10__create_review_table.sql
@@ -3055,6 +3451,41 @@ logging:
     # org.hibernate.SQL: DEBUG
     # org.hibernate.orm.jdbc.bind: TRACE     # Hibernate 6'da BasicBinder yerine orm.jdbc.bind
 
+# Notification (Bölüm 18)
+notification:
+  provider: sendgrid
+  api-key: ${SENDGRID_API_KEY:}
+  from-email: ${NOTIFICATION_FROM_EMAIL:noreply@aestheticclinic.com}
+  from-name: ${NOTIFICATION_FROM_NAME:Aesthetic Clinic}
+  sms:
+    provider: netgsm
+    username: ${NETGSM_USERNAME:}
+    password: ${NETGSM_PASSWORD:}
+    sender-id: ${NETGSM_SENDER_ID:}
+
+# Sentry (error tracking — Bölüm 25)
+sentry:
+  dsn: ${SENTRY_DSN:}
+  environment: ${SPRING_PROFILES_ACTIVE:dev}
+  traces-sample-rate: 1.0
+
+# Actuator & Prometheus (Bölüm 14)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus, metrics
+  endpoint:
+    health:
+      show-details: when_authorized
+  metrics:
+    tags:
+      application: aesthetic-backend
+
+# CORS
+app:
+  frontend-url: ${FRONTEND_URL:http://localhost:3000}
+
 server:
   port: ${SERVER_PORT:8080}
 ```
@@ -3186,6 +3617,29 @@ tasks.withType<Test> {
 }
 ```
 
+### 9.3 FlywayConfig.kt
+
+```kotlin
+// FlywayConfig.kt — Flyway migration konfigürasyonu
+@Configuration
+class FlywayConfig {
+
+    @Bean
+    fun flyway(dataSource: DataSource): Flyway {
+        return Flyway.configure()
+            .dataSource(dataSource)
+            .locations("classpath:db/migration")
+            .baselineOnMigrate(true)           // Mevcut DB varsa baseline al
+            .baselineVersion("0")              // Başlangıç versiyonu
+            .validateOnMigrate(true)           // Migration checksum doğrulama
+            .encoding(Charsets.UTF_8)
+            .table("flyway_schema_history")    // Flyway tracking tablosu
+            .load()
+            .also { it.migrate() }
+    }
+}
+```
+
 ---
 
 ## 10. Docker & Deployment
@@ -3250,6 +3704,11 @@ services:
     ports:
       - "6379:6379"
     restart: unless-stopped
+    healthcheck:                                         # DÜZELTME: Redis healthcheck eklendi
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     volumes:
       - redis-data:/data
 
@@ -3814,6 +4273,45 @@ class PlanLimitService(
 
 // Not: iyzico dependency zaten build.gradle.kts'te mevcut (Bölüm 9.2)
 // implementation("com.iyzipay:iyzipay-java:2.0.131")
+
+// DÜZELTME: iyzico webhook HMAC doğrulama — dış servislerden gelen isteklerin güvenliği
+@RestController
+@RequestMapping("/api/webhooks")
+class WebhookController(
+    private val billingService: BillingService,
+    @Value("\${iyzico.secret-key}") private val iyzicoSecretKey: String
+) {
+    private val logger = LoggerFactory.getLogger(WebhookController::class.java)
+
+    @PostMapping("/iyzico")
+    fun handleIyzicoWebhook(
+        @RequestBody payload: String,
+        @RequestHeader("X-IYZ-SIGNATURE") signature: String?
+    ): ResponseEntity<String> {
+        // 1. HMAC-SHA256 imza doğrulama
+        if (signature == null || !verifySignature(payload, signature)) {
+            logger.warn("iyzico webhook — geçersiz imza reddedildi")
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid signature")
+        }
+
+        // 2. İş mantığını işle
+        try {
+            billingService.processWebhookPayload(payload)
+        } catch (e: Exception) {
+            logger.error("iyzico webhook işleme hatası", e)
+            // Webhook'a 200 dön (tekrar denemesini engelle), hatayı logla
+        }
+
+        return ResponseEntity.ok("OK")
+    }
+
+    private fun verifySignature(payload: String, receivedSignature: String): Boolean {
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(iyzicoSecretKey.toByteArray(), "HmacSHA256"))
+        val expectedSignature = Base64.getEncoder().encodeToString(mac.doFinal(payload.toByteArray()))
+        return MessageDigest.isEqual(expectedSignature.toByteArray(), receivedSignature.toByteArray())
+    }
+}
 ```
 
 ---
@@ -3901,6 +4399,137 @@ enum class NotificationType {
 }
 enum class NotificationChannel { EMAIL, SMS }
 enum class DeliveryStatus { PENDING, SENT, FAILED, BOUNCED }
+```
+
+### 18.2.1 NotificationService — Bildirim Gönderim Servisi
+
+```kotlin
+@Service
+class NotificationService(
+    private val notificationTemplateRepository: NotificationTemplateRepository,
+    private val notificationLogRepository: NotificationLogRepository,
+    private val emailService: EmailService,
+    private val smsService: SmsService
+) {
+    private val logger = LoggerFactory.getLogger(NotificationService::class.java)
+
+    /**
+     * Randevu onay bildirimi gönder (randevu oluşturulduktan sonra çağrılır)
+     */
+    @Async("taskExecutor")
+    @Retryable(maxAttempts = 3, backoff = Backoff(delay = 2000))
+    fun sendAppointmentConfirmation(appointment: Appointment) {
+        val tenantId = TenantContext.getTenantId()
+        val template = notificationTemplateRepository
+            .findByTenantIdAndType(tenantId, NotificationType.APPOINTMENT_CONFIRMATION)
+            ?: return  // Template yoksa bildirim gönderilmez
+
+        val variables = mapOf(
+            "clientName" to appointment.clientName,
+            "serviceName" to (appointment.primaryService?.title ?: ""),
+            "date" to appointment.date.toString(),
+            "startTime" to appointment.startTime.toString(),
+            "staffName" to (appointment.staff?.name ?: "")
+        )
+
+        sendNotification(tenantId, template, appointment, variables)
+    }
+
+    /**
+     * Hatırlatma bildirimi gönder (scheduled job tarafından çağrılır)
+     */
+    @Retryable(maxAttempts = 3, backoff = Backoff(delay = 2000))
+    fun sendReminder(appointment: Appointment, type: NotificationType) {
+        val tenantId = TenantContext.getTenantId()
+        val template = notificationTemplateRepository
+            .findByTenantIdAndType(tenantId, type) ?: return
+
+        val variables = mapOf(
+            "clientName" to appointment.clientName,
+            "serviceName" to (appointment.primaryService?.title ?: ""),
+            "date" to appointment.date.toString(),
+            "startTime" to appointment.startTime.toString()
+        )
+
+        sendNotification(tenantId, template, appointment, variables)
+    }
+
+    /**
+     * Randevu sonrası değerlendirme isteği gönder
+     */
+    @Async("taskExecutor")
+    fun sendReviewRequest(appointment: Appointment) {
+        val tenantId = TenantContext.getTenantId()
+        val template = notificationTemplateRepository
+            .findByTenantIdAndType(tenantId, NotificationType.REVIEW_REQUEST) ?: return
+
+        val variables = mapOf(
+            "clientName" to appointment.clientName,
+            "serviceName" to (appointment.primaryService?.title ?: "")
+        )
+
+        sendNotification(tenantId, template, appointment, variables)
+    }
+
+    private fun sendNotification(
+        tenantId: String,
+        template: NotificationTemplate,
+        appointment: Appointment,
+        variables: Map<String, String>
+    ) {
+        // E-posta gönderimi
+        if (template.isEmailEnabled && appointment.clientEmail.isNotBlank()) {
+            try {
+                val subject = replaceVariables(template.emailSubject ?: "", variables)
+                val body = replaceVariables(template.emailBody ?: "", variables)
+                emailService.send(appointment.clientEmail, subject, body)
+
+                logNotification(tenantId, appointment, NotificationChannel.EMAIL, template.type, DeliveryStatus.SENT)
+            } catch (e: Exception) {
+                logger.error("E-posta gönderilemedi — appointment={}, email={}", appointment.id, appointment.clientEmail, e)
+                logNotification(tenantId, appointment, NotificationChannel.EMAIL, template.type, DeliveryStatus.FAILED, e.message)
+            }
+        }
+
+        // SMS gönderimi
+        if (template.isSmsEnabled && appointment.clientPhone.isNotBlank()) {
+            try {
+                val body = replaceVariables(template.smsBody ?: "", variables)
+                smsService.send(appointment.clientPhone, body)
+
+                logNotification(tenantId, appointment, NotificationChannel.SMS, template.type, DeliveryStatus.SENT)
+            } catch (e: Exception) {
+                logger.error("SMS gönderilemedi — appointment={}, phone={}", appointment.id, appointment.clientPhone, e)
+                logNotification(tenantId, appointment, NotificationChannel.SMS, template.type, DeliveryStatus.FAILED, e.message)
+            }
+        }
+    }
+
+    private fun logNotification(
+        tenantId: String, appointment: Appointment,
+        channel: NotificationChannel, type: NotificationType,
+        status: DeliveryStatus, errorMessage: String? = null
+    ) {
+        val log = NotificationLog().apply {
+            this.appointmentId = appointment.id
+            this.recipientEmail = if (channel == NotificationChannel.EMAIL) appointment.clientEmail else null
+            this.recipientPhone = if (channel == NotificationChannel.SMS) appointment.clientPhone else null
+            this.channel = channel
+            this.type = type
+            this.status = status
+            this.errorMessage = errorMessage
+            if (status == DeliveryStatus.SENT) this.sentAt = Instant.now()
+        }
+        notificationLogRepository.save(log)
+    }
+
+    /** Mustache-style {{variable}} değişken yerleştirme */
+    private fun replaceVariables(template: String, variables: Map<String, String>): String {
+        var result = template
+        variables.forEach { (key, value) -> result = result.replace("{{$key}}", value) }
+        return result
+    }
+}
 ```
 
 ### 18.3 Randevu Hatırlatıcı Job
@@ -3994,6 +4623,83 @@ notification:
     usercode: ${NETGSM_USERCODE:}
     password: ${NETGSM_PASSWORD:}
     msgheader: ${NETGSM_HEADER:APPMESAJ}
+```
+
+### 18.4.1 EmailService + SmsService Interface'leri
+
+```kotlin
+/** E-posta gönderim soyutlaması */
+interface EmailService {
+    fun send(to: String, subject: String, htmlBody: String)
+}
+
+/** SMS gönderim soyutlaması */
+interface SmsService {
+    fun send(to: String, body: String)
+}
+
+/** SendGrid implementasyonu */
+@Service
+@ConditionalOnProperty("notification.provider", havingValue = "sendgrid")
+class SendGridEmailService(
+    @Value("\${notification.api-key}") private val apiKey: String,
+    @Value("\${notification.from-email}") private val fromEmail: String,
+    @Value("\${notification.from-name}") private val fromName: String
+) : EmailService {
+    // SendGrid API çağrısı
+    override fun send(to: String, subject: String, htmlBody: String) {
+        val sg = SendGrid(apiKey)
+        val mail = Mail(Email(fromEmail, fromName), subject, Email(to), Content("text/html", htmlBody))
+        val response = sg.api(Request().apply {
+            method = Method.POST
+            endpoint = "mail/send"
+            body = mail.build()
+        })
+        if (response.statusCode !in 200..299) {
+            throw RuntimeException("SendGrid hatası: ${response.statusCode} — ${response.body}")
+        }
+    }
+}
+
+/**
+ * Netgsm SMS implementasyonu — Spring RestTemplate kullanır, ek dependency gerekmez.
+ * Netgsm REST API dökümantasyonu: https://www.netgsm.com.tr/dokuman/
+ */
+@Service
+@ConditionalOnProperty("notification.sms.provider", havingValue = "netgsm")
+class NetgsmSmsService(
+    @Value("\${notification.sms.username}") private val username: String,
+    @Value("\${notification.sms.password}") private val password: String,
+    @Value("\${notification.sms.sender-id}") private val senderId: String,
+    private val restTemplate: RestTemplate
+) : SmsService {
+    private val logger = LoggerFactory.getLogger(NetgsmSmsService::class.java)
+    private val apiUrl = "https://api.netgsm.com.tr/sms/send/get"
+
+    override fun send(to: String, body: String) {
+        val params = mapOf(
+            "usercode" to username,
+            "password" to password,
+            "gsmno" to to.replace("+", ""),    // +905xx → 905xx
+            "message" to body,
+            "msgheader" to senderId
+        )
+        val url = UriComponentsBuilder.fromUriString(apiUrl)
+            .queryParam("usercode", "{usercode}")
+            .queryParam("password", "{password}")
+            .queryParam("gsmno", "{gsmno}")
+            .queryParam("message", "{message}")
+            .queryParam("msgheader", "{msgheader}")
+            .encode().toUriString()
+
+        val response = restTemplate.getForObject(url, String::class.java, params)
+        // Netgsm response: "00" = başarılı, "30" = hatalı numara, "70" = yetersiz bakiye
+        if (response == null || !response.startsWith("00")) {
+            logger.error("Netgsm SMS hatası — gsmno={}, response={}", to, response)
+            throw RuntimeException("SMS gönderilemedi: $response")
+        }
+    }
+}
 ```
 
 ---
