@@ -2958,8 +2958,7 @@ tasks.withType<Test> {
 ### 10.1 docker-compose.yml
 
 ```yaml
-version: '3.8'
-
+# Docker Compose V2 — 'version' alanı artık gerekli değil (deprecated)
 services:
   app:
     build: .
@@ -2970,70 +2969,110 @@ services:
       - DB_PORT=3306
       - DB_NAME=aesthetic_saas
       - DB_USERNAME=root
-      - DB_PASSWORD=secret
-      - JWT_SECRET=your-production-secret-key-min-256-bits
+      - DB_PASSWORD=${DB_PASSWORD:-secret}       # .env dosyasından al
+      - JWT_SECRET=${JWT_SECRET}                 # Zorunlu! .env dosyasında tanımla
       - FILE_PROVIDER=local
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - JAVA_OPTS=-Xmx512m -Xms256m             # JVM memory ayarları
     depends_on:
       mysql:
         condition: service_healthy
+      redis:
+        condition: service_started
     volumes:
       - uploads:/app/uploads
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s                          # Spring Boot başlayana kadar bekle
 
   mysql:
     image: mysql:8.0
     ports:
       - "3306:3306"
     environment:
-      - MYSQL_ROOT_PASSWORD=secret
+      - MYSQL_ROOT_PASSWORD=${DB_PASSWORD:-secret}
       - MYSQL_DATABASE=aesthetic_saas
+    command:                                     # utf8mb4_turkish_ci (Bölüm 8 ile tutarlı)
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_turkish_ci
     volumes:
       - mysql-data:/var/lib/mysql
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # Redis (opsiyonel — cache + session)
-  # redis:
-  #   image: redis:7-alpine
-  #   ports:
-  #     - "6379:6379"
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
 
 volumes:
   mysql-data:
   uploads:
+  redis-data:
 ```
 
 ### 10.2 Dockerfile
 
 ```dockerfile
-FROM eclipse-temurin:21-jre-alpine AS runtime
+FROM eclipse-temurin:21-jre-alpine
+
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
 WORKDIR /app
-
 COPY build/libs/*.jar app.jar
+RUN chown -R appuser:appgroup /app
 
+USER appuser
 EXPOSE 8080
 
-ENTRYPOINT ["java", "-jar", "app.jar"]
+# JAVA_OPTS env ile JVM parametreleri dışarıdan ayarlanabilir
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
 ```
 
 ### 10.3 Multi-Stage Build (Prodüksiyon)
+
+> **Not:** `.dockerignore` dosyası oluşturun: `.git`, `.idea`, `build/`, `node_modules/`, `*.md` gibi
+> gereksiz dosyaların Docker context'e girmesini engelleyin.
 
 ```dockerfile
 # Build stage
 FROM eclipse-temurin:21-jdk-alpine AS builder
 WORKDIR /build
-COPY . .
+# Önce dependency'leri cache'le (layer optimization)
+COPY build.gradle.kts settings.gradle.kts ./
+COPY gradle ./gradle
+RUN ./gradlew dependencies --no-daemon || true
+# Sonra kodu kopyala ve build et
+COPY src ./src
 RUN ./gradlew bootJar --no-daemon
 
 # Runtime stage
 FROM eclipse-temurin:21-jre-alpine
+
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
 WORKDIR /app
 COPY --from=builder /build/build/libs/*.jar app.jar
+RUN chown -R appuser:appgroup /app
+
+USER appuser
 EXPOSE 8080
-ENTRYPOINT ["java", "-Xmx512m", "-jar", "app.jar"]
+
+# JAVA_OPTS env ile JVM parametreleri dışarıdan ayarlanabilir (docker-compose'da tanımlı)
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
 ```
 
 ---
