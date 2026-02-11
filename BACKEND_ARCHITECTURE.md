@@ -3095,27 +3095,33 @@ Yeni:     Next.js → Spring Boot API → JPA → MySQL
 
 ```typescript
 // lib/api-client.ts (Next.js tarafı)
+// HTTPS zorunlu — prod'da http:// kullanmayın
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
-export async function fetchServices() {
-  const res = await fetch(`${API_BASE}/api/public/services`, {
-    headers: {
-      'X-Tenant-ID': getTenantSlug(), // veya subdomain'den otomatik
-    },
-  });
+// Tenant çözünürlüğü: Subdomain otomatik olarak TenantFilter tarafından
+// çözülür (Bölüm 2.2). API'ye ayrıca X-Tenant-ID header'ı gerekmez.
+// Sadece cross-origin (farklı domain) isteklerinde X-Tenant-Slug gerekebilir.
+
+async function handleResponse<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ message: 'Bir hata oluştu' }));
+    throw new Error(error.message || `HTTP ${res.status}`);
+  }
   return res.json();
+}
+
+export async function fetchServices() {
+  const res = await fetch(`${API_BASE}/api/public/services`);
+  return handleResponse(res);
 }
 
 export async function createAppointment(data: AppointmentFormData) {
   const res = await fetch(`${API_BASE}/api/public/appointments`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Tenant-ID': getTenantSlug(),
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  return res.json();
+  return handleResponse(res);
 }
 ```
 
@@ -3123,25 +3129,39 @@ export async function createAppointment(data: AppointmentFormData) {
 
 ```typescript
 // lib/admin-api-client.ts
-export async function adminFetch(endpoint: string, options?: RequestInit) {
-  const token = getAccessToken(); // JWT from localStorage/cookie
+const MAX_RETRY = 1; // Sonsuz döngüyü önle
+
+export async function adminFetch(
+  endpoint: string,
+  options?: RequestInit,
+  retryCount = 0
+) {
+  // JWT: httpOnly cookie (SSR güvenli) veya Authorization header
+  // localStorage XSS'e açık — httpOnly cookie önerilir
+  const token = getAccessToken(); // Cookie'den veya memory'den oku
 
   const res = await fetch(`${API_BASE}/api/admin${endpoint}`, {
     ...options,
+    credentials: 'include',         // httpOnly cookie için gerekli
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
       ...options?.headers,
     },
   });
 
-  if (res.status === 401) {
-    // Token expired → refresh
-    await refreshToken();
-    return adminFetch(endpoint, options); // Retry
+  // 401 → Token expired, max 1 retry ile refresh dene
+  if (res.status === 401 && retryCount < MAX_RETRY) {
+    const refreshed = await refreshToken();
+    if (refreshed) {
+      return adminFetch(endpoint, options, retryCount + 1);
+    }
+    // Refresh de başarısız → login sayfasına yönlendir
+    window.location.href = '/giris';
+    throw new Error('Oturum süresi doldu');
   }
 
-  return res.json();
+  return handleResponse(res);       // Aynı error handling (11.1'deki)
 }
 ```
 
@@ -3150,7 +3170,7 @@ export async function adminFetch(endpoint: string, options?: RequestInit) {
 ## 12. Tenant Onboarding Akışı
 
 ```
-Yeni işletme kaydı:
+Yeni işletme kaydı (tümü @Transactional içinde):
 
   ① İşletme sahibi kayıt formu doldurur
      → POST /api/platform/tenants
@@ -3158,25 +3178,36 @@ Yeni işletme kaydı:
      ▼
   ② Tenant oluşturulur (slug: "guzellik-merkezi-ayse")
      → tenants tablosuna kayıt
+     → trial_end_date = now + 14 gün (Bölüm 4 Tenant entity)
      │
      ▼
   ③ Varsayılan admin kullanıcı oluşturulur
      → users tablosuna TENANT_ADMIN rolünde
+     → Geçici şifre oluşturulur ve e-posta ile gönderilir
+     → İlk girişte şifre değişikliği zorunlu (forcePasswordChange = true)
      │
      ▼
   ④ Varsayılan site ayarları oluşturulur
-     → site_settings tablosuna
+     → site_settings tablosuna (timezone: Europe/Istanbul default)
      │
      ▼
-  ⑤ Varsayılan çalışma saatleri oluşturulur
+  ⑤ Varsayılan hizmet kategorileri oluşturulur
+     → service_categories tablosuna (işletme tipine göre şablon)
+     │
+     ▼
+  ⑥ Varsayılan çalışma saatleri oluşturulur
      → working_hours tablosuna (Pzt-Cmt 09:00-18:00)
      │
      ▼
-  ⑥ Deneme süresi başlar (14 gün)
-     → plan = TRIAL
+  ⑦ Subscription kaydı oluşturulur
+     → subscriptions tablosuna (plan = TRIAL, endDate = now + 14 gün)
      │
      ▼
-  ⑦ Subdomain aktif: guzellik-merkezi-ayse.app.com
+  ⑧ Hoş geldiniz e-postası gönderilir
+     → Admin URL + geçici şifre + başlangıç kılavuzu
+     │
+     ▼
+  ⑨ Subdomain aktif: guzellik-merkezi-ayse.app.com
 ```
 
 ---
@@ -3192,17 +3223,21 @@ Yeni işletme kaydı:
 - Tüm liste endpoint'leri `Pageable` destekler
 - `?page=0&size=20&sort=createdAt,desc`
 
-### 13.3 Cache Stratejisi (Redis ile)
-- Hizmet listesi: 5 dk TTL
-- Ürün listesi: 5 dk TTL
-- Blog listesi: 5 dk TTL
-- Müsaitlik: 1 dk TTL (kısa, güncel olmalı)
+### 13.3 Cache Stratejisi (Caffeine local cache)
+- `tenants`: Tenant slug çözünürlüğü — 5 dk TTL (Bölüm 2.2)
+- `services`: Hizmet listesi — 5 dk TTL
+- `products`: Ürün listesi — 5 dk TTL
+- `blog`: Blog listesi — 5 dk TTL
+- `gallery`: Galeri listesi — 5 dk TTL
 - Site ayarları: 15 dk TTL
-- Cache invalidation: Entity değiştiğinde `@CacheEvict`
+- Müsaitlik: Cache'lenmez (her sorguda güncel veri gerekli)
+- Cache invalidation: Entity değiştiğinde `@CacheEvict` (tenant-scoped key ile)
+- Redis: Rate limiting ve distributed session için kullanılır, entity cache için değil
 
 ### 13.4 Connection Pool
 - HikariCP (Spring Boot default)
-- `maximum-pool-size: 20` (tenant sayısına göre ayarlanır)
+- `maximum-pool-size: 30` (geliştirme, Bölüm 9.1'de tanımlı)
+- Prod: `application-prod.yml`'de tenant sayısına göre 50+ ayarlanır
 
 ---
 
@@ -3213,16 +3248,37 @@ Yeni işletme kaydı:
 /actuator/health         # Sağlık durumu (DB, Redis)
 /actuator/metrics        # JVM, HTTP, DB metrikleri
 /actuator/prometheus     # Prometheus formatında metrikler
+                         # → Gerekli: implementation("io.micrometer:micrometer-registry-prometheus")
+                         #   (build.gradle.kts'e eklenecek)
 ```
 
-### 14.2 Structured Logging
+### 14.2 Structured Logging (MDC ile)
 ```kotlin
-// Her log satırında tenant bilgisi
-logger.info("[tenant={}] Randevu oluşturuldu: {}", tenantId, appointmentId)
+// TenantFilter'da MDC set edilir — tüm loglara otomatik tenant bilgisi eklenir
+import org.slf4j.MDC
+
+// TenantFilter.doFilterInternal() içinde:
+MDC.put("tenantId", tenant.id)
+MDC.put("tenantSlug", tenant.slug)
+try {
+    filterChain.doFilter(request, response)
+} finally {
+    MDC.clear()
+}
+
+// application.yml'de log pattern:
+// logging.pattern.console: "%d{HH:mm:ss.SSS} [%thread] [tenant=%X{tenantSlug}] %-5level %logger{36} - %msg%n"
+
+// Kullanım — MDC otomatik olarak log satırlarına eklenir:
+logger.info("Randevu oluşturuldu: {}", appointmentId)
+// Çıktı: 14:30:15.123 [http-1] [tenant=guzellik-merkezi] INFO  AppointmentService - Randevu oluşturuldu: abc-123
 ```
 
 ### 14.3 Audit Log
 ```kotlin
+// Not: AuditLog manuel tenantId kullanır (TenantAwareEntity'den extends etmez),
+// çünkü platform admin tüm tenant'ların loglarını görebilmelidir.
+// Okuma sorgularında tenant filtresi use-case bazlı uygulanır.
 @Entity
 @Table(name = "audit_logs")
 class AuditLog(
@@ -3235,7 +3291,7 @@ class AuditLog(
     val entityId: String,
     val details: String? = null, // JSON: değişen alanlar
     val ipAddress: String? = null,
-    val createdAt: LocalDateTime = LocalDateTime.now()
+    val createdAt: Instant = Instant.now()    // UTC timestamp
 )
 ```
 
@@ -3260,28 +3316,75 @@ class AuditLog(
 @Testcontainers
 class AppointmentConcurrencyTest {
 
+    companion object {
+        @Container
+        @JvmStatic
+        val mysql = MySQLContainer("mysql:8.0")
+            .withDatabaseName("aesthetic_saas_test")
+            .withCommand("--character-set-server=utf8mb4", "--collation-server=utf8mb4_turkish_ci")
+
+        @DynamicPropertySource
+        @JvmStatic
+        fun properties(registry: DynamicPropertyRegistry) {
+            registry.add("spring.datasource.url") { mysql.jdbcUrl }
+            registry.add("spring.datasource.username") { mysql.username }
+            registry.add("spring.datasource.password") { mysql.password }
+        }
+    }
+
+    @Autowired
+    private lateinit var appointmentService: AppointmentService
+
+    @Autowired
+    private lateinit var appointmentRepository: AppointmentRepository
+
+    private val testTenantId = "test-tenant-001"
+
+    @BeforeEach
+    fun setup() {
+        // Multi-tenant test: TenantContext ayarla
+        TenantContext.setCurrentTenant(testTenantId)
+        // Test verisi oluştur (staff, service, working_hours vb.)
+    }
+
+    @AfterEach
+    fun cleanup() {
+        TenantContext.clear()
+        appointmentRepository.deleteAll()
+    }
+
     @Test
     fun `aynı slota eşzamanlı iki randevu isteği geldiğinde sadece biri başarılı olmalı`() {
+        val request1 = CreateAppointmentRequest(/* aynı tarih, saat, staff */)
+        val request2 = CreateAppointmentRequest(/* aynı tarih, saat, staff */)
+
         val latch = CountDownLatch(1)
         val results = ConcurrentHashMap<String, Boolean>()
 
+        // Not: Her thread kendi TenantContext'ini set etmeli
         val thread1 = Thread {
+            TenantContext.setCurrentTenant(testTenantId)
             latch.await()
             try {
                 appointmentService.createAppointment(request1)
                 results["thread1"] = true
             } catch (e: AppointmentConflictException) {
                 results["thread1"] = false
+            } finally {
+                TenantContext.clear()
             }
         }
 
         val thread2 = Thread {
+            TenantContext.setCurrentTenant(testTenantId)
             latch.await()
             try {
                 appointmentService.createAppointment(request2) // aynı slot
                 results["thread2"] = true
             } catch (e: AppointmentConflictException) {
                 results["thread2"] = false
+            } finally {
+                TenantContext.clear()
             }
         }
 
@@ -3289,8 +3392,8 @@ class AppointmentConcurrencyTest {
         thread2.start()
         latch.countDown() // İkisini aynı anda başlat
 
-        thread1.join()
-        thread2.join()
+        thread1.join(5000) // 5s timeout
+        thread2.join(5000)
 
         // Sadece biri başarılı olmalı
         val successCount = results.values.count { it }
