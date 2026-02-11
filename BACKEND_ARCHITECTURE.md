@@ -1362,26 +1362,34 @@ class AppointmentService(
     private val availabilityService: AvailabilityService,
     private val serviceRepository: ServiceRepository,
     private val settingsRepository: SiteSettingsRepository,
-    private val notificationService: NotificationService
+    private val notificationService: NotificationService,
+    private val entityManager: EntityManager    // getReference() için gerekli
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
 
     /**
      * Randevu oluşturma — Pessimistic Locking ile çift randevu engelleme
      *
-     * İzolasyon seviyesi: READ_COMMITTED (MySQL default)
+     * İzolasyon seviyesi: READ_COMMITTED (explicit, MySQL default ile aynı)
      * SERIALIZABLE KULLANMA! Deadlock'a neden olur.
      * PESSIMISTIC_WRITE (@Lock) tek başına yeterli.
      */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     fun createAppointment(request: CreateAppointmentRequest): Appointment {
         val tenantId = TenantContext.getTenantId()
 
         // ── ① Geçmiş tarih kontrolü ──
-        if (request.date.isBefore(LocalDate.now())) {
+        // KRİTİK: Tenant'ın timezone'unu kullan, sunucu timezone'u DEĞİL!
+        val settings = settingsRepository.findByTenantId(tenantId)
+        val tenantZone = ZoneId.of(settings?.timezone ?: "Europe/Istanbul")
+        val now = ZonedDateTime.now(tenantZone)
+        val today = now.toLocalDate()
+        val currentTime = now.toLocalTime()
+
+        if (request.date.isBefore(today)) {
             throw IllegalArgumentException("Geçmiş bir tarihe randevu oluşturulamaz")
         }
-        if (request.date == LocalDate.now() && request.startTime.isBefore(LocalTime.now())) {
+        if (request.date == today && request.startTime.isBefore(currentTime)) {
             throw IllegalArgumentException("Geçmiş bir saate randevu oluşturulamaz")
         }
 
@@ -1393,17 +1401,34 @@ class AppointmentService(
         }
 
         val totalDuration = services.sumOf { it.durationMinutes }
-        val totalBuffer = services.maxOfOrNull { it.bufferMinutes } ?: 0
+        // Buffer time: sıralı hizmetlerde SON hizmetin buffer'ı kullanılır.
+        // Ara hizmetlerin buffer'ı anlamsız çünkü sonraki hizmet hemen başlar.
+        val totalBuffer = services.lastOrNull()?.bufferMinutes ?: 0
         val totalPrice = services.sumOf { it.price }
         val startTime = request.startTime
         val endTime = startTime.plusMinutes(totalDuration.toLong())
         val endTimeWithBuffer = endTime.plusMinutes(totalBuffer.toLong())
 
-        // ── ③ Pessimistic Lock ile çakışma kontrolü ──
+        // ── ③ Personel belirleme ──
+        // Eğer staffId null ise → "herhangi bir müsait personel" senaryosu.
+        // Tüm aktif personeli iterate et, ilk müsait olanı ata.
+        val resolvedStaffId: String = if (request.staffId != null) {
+            request.staffId
+        } else {
+            availabilityService.findAvailableStaff(
+                tenantId, request.date, startTime, endTimeWithBuffer
+            ) ?: throw AppointmentConflictException(
+                "Bu zaman diliminde müsait personel bulunamadı. " +
+                "Lütfen başka bir saat seçin."
+            )
+        }
+
+        // ── ④ Pessimistic Lock ile çakışma kontrolü ──
         // READ_COMMITTED + FOR UPDATE: İkinci transaction ilkinin bitmesini bekler
+        // staffId artık non-null zorunlu (yukarıda resolve edildi)
         val conflicts = appointmentRepository.findConflictingAppointmentsWithLock(
             tenantId = tenantId,
-            staffId = request.staffId,
+            staffId = resolvedStaffId,
             date = request.date,
             startTime = startTime,
             endTime = endTimeWithBuffer   // Buffer time dahil
@@ -1416,26 +1441,28 @@ class AppointmentService(
             )
         }
 
-        // ── ④ Çalışma saatleri kontrolü ──
+        // ── ⑤ Çalışma saatleri kontrolü ──
         if (!availabilityService.isWithinWorkingHours(
-                tenantId, request.staffId, request.date, startTime, endTime)) {
+                tenantId, resolvedStaffId, request.date, startTime, endTime)) {
             throw IllegalArgumentException("Seçilen saat çalışma saatleri dışında")
         }
 
-        // ── ⑤ Bloklanmış zaman kontrolü ──
+        // ── ⑥ Bloklanmış zaman kontrolü ──
         if (availabilityService.isTimeSlotBlocked(
-                tenantId, request.staffId, request.date, startTime, endTime)) {
+                tenantId, resolvedStaffId, request.date, startTime, endTime)) {
             throw AppointmentConflictException("Bu zaman dilimi bloklanmış")
         }
 
         // ── ⑥ Randevu oluştur ──
+        // NOT: tenantId set etmeye GEREK YOK — TenantEntityListener.onPrePersist otomatik set eder.
         val appointment = Appointment().apply {
-            this.tenantId = tenantId
             this.clientName = request.clientName
             this.clientEmail = request.clientEmail
             this.clientPhone = request.clientPhone
             this.primaryService = services.first()
-            this.staff = request.staffId?.let { User().apply { id = it } }
+            // KRİTİK: User.id val (read-only), yeni User() ile id atayamazsın!
+            // entityManager.getReference() lazy proxy döndürür, DB'ye gitmez.
+            this.staff = entityManager.getReference(User::class.java, resolvedStaffId)
             this.date = request.date
             this.startTime = startTime
             this.endTime = endTime
@@ -1526,36 +1553,58 @@ class AppointmentService(
 
     /**
      * Tekrarlayan randevu oluşturma
+     *
+     * DÜZELTMELER:
+     * - recurrenceRule doğrulaması döngü ÖNCESİNDE yapılır (kısmi oluşturma önlenir)
+     * - Tüm exception'lar yakalanır (sadece conflict değil, çalışma saati vs. de)
+     * - recurringGroupId ve recurrenceRule, appointment oluşturulmadan ÖNCE set edilir (ekstra save yok)
      */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     fun createRecurringAppointments(
         request: CreateAppointmentRequest,
         recurrenceRule: String,   // "WEEKLY", "BIWEEKLY", "MONTHLY"
         count: Int                // Kaç tekrar
     ): List<Appointment> {
+        // ── ① Validasyon (döngü öncesi!) ──
+        val validRules = setOf("WEEKLY", "BIWEEKLY", "MONTHLY")
+        require(recurrenceRule in validRules) {
+            "Geçersiz tekrar kuralı: $recurrenceRule. Geçerli: $validRules"
+        }
+        require(count in 1..52) {
+            "Tekrar sayısı 1-52 arasında olmalıdır"
+        }
+
         val groupId = UUID.randomUUID().toString()
         val appointments = mutableListOf<Appointment>()
+        val skippedDates = mutableListOf<LocalDate>()
 
         var currentDate = request.date
         for (i in 0 until count) {
             val singleRequest = request.copy(date = currentDate)
             try {
-                val appointment = createAppointment(singleRequest)
-                appointment.recurringGroupId = groupId
-                appointment.recurrenceRule = recurrenceRule
-                appointmentRepository.save(appointment)
+                val appointment = createAppointment(singleRequest).apply {
+                    this.recurringGroupId = groupId
+                    this.recurrenceRule = recurrenceRule
+                }
+                // recurringGroupId zaten set edildi, save createAppointment içinde yapıldı
                 appointments.add(appointment)
-            } catch (e: AppointmentConflictException) {
-                logger.warn("Tekrarlayan randevu çakışması: {} tarihinde", currentDate)
-                // Çakışan tarihi atla, devam et
+            } catch (e: Exception) {
+                // Tüm hataları yakala (conflict, çalışma saati dışı, bloklanmış slot vs.)
+                logger.warn("Tekrarlayan randevu atlandı: {} tarihinde — {}", currentDate, e.message)
+                skippedDates.add(currentDate)
             }
 
             currentDate = when (recurrenceRule) {
                 "WEEKLY" -> currentDate.plusWeeks(1)
                 "BIWEEKLY" -> currentDate.plusWeeks(2)
                 "MONTHLY" -> currentDate.plusMonths(1)
-                else -> throw IllegalArgumentException("Geçersiz tekrar kuralı: $recurrenceRule")
+                else -> error("unreachable")  // Yukarıda validate edildi
             }
+        }
+
+        if (skippedDates.isNotEmpty()) {
+            logger.info("Tekrarlayan randevu: {} başarılı, {} atlandı (tarihler: {})",
+                appointments.size, skippedDates.size, skippedDates)
         }
 
         return appointments
@@ -1598,23 +1647,30 @@ interface AppointmentRepository : JpaRepository<Appointment, String> {
      * Çakışan randevuları pessimistic lock ile sorgula.
      * SELECT ... FOR UPDATE ile satır seviyesinde kilit alır.
      * Aynı anda gelen ikinci istek, ilk transaction bitene kadar bekler.
+     *
+     * DÜZELTMELER:
+     * - Enum karşılaştırması parametre ile (string literal JPQL'de hatalı)
+     * - staffId NULL durumu: Belirli bir staff'ın randevuları kontrol edilir.
+     *   "Herhangi bir personel" senaryosu burada DEĞİL, AvailabilityService'te ele alınır.
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""
         SELECT a FROM Appointment a
         WHERE a.tenantId = :tenantId
         AND a.date = :date
-        AND a.status NOT IN ('CANCELLED', 'NO_SHOW')
-        AND (a.staff.id = :staffId OR :staffId IS NULL)
+        AND a.status NOT IN (:excludeStatuses)
+        AND a.staff.id = :staffId
         AND a.startTime < :endTime
         AND a.endTime > :startTime
     """)
     fun findConflictingAppointmentsWithLock(
         @Param("tenantId") tenantId: String,
-        @Param("staffId") staffId: String?,
+        @Param("staffId") staffId: String,
         @Param("date") date: LocalDate,
         @Param("startTime") startTime: LocalTime,
-        @Param("endTime") endTime: LocalTime
+        @Param("endTime") endTime: LocalTime,
+        @Param("excludeStatuses") excludeStatuses: List<AppointmentStatus> =
+            listOf(AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW)
     ): List<Appointment>
 
     /**
@@ -1684,11 +1740,14 @@ class AvailabilityService(
         )
 
         // 3. Mevcut randevuları al
-        val existingAppointments = appointmentRepository
-            .findByTenantIdAndStaffIdAndDateOrderByStartTime(
-                tenantId, staffId ?: "", date
-            )
-            .filter { it.status !in listOf(AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW) }
+        // DÜZELTME: staffId null durumunda boş string DEĞİL, null-safe sorgu kullanılmalı
+        val existingAppointments = if (staffId != null) {
+            appointmentRepository.findByTenantIdAndStaffIdAndDateOrderByStartTime(
+                tenantId, staffId, date
+            ).filter { it.status !in listOf(AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW) }
+        } else {
+            emptyList()  // staffId null ise tüm staff için ayrı ayrı kontrol edilmeli
+        }
 
         // 4. Bloklanmış zamanları al
         val blockedSlots = blockedTimeSlotRepository
@@ -1749,7 +1808,17 @@ class AvailabilityService(
             tenantId, staffId, date.dayOfWeek
         ) ?: return false
 
-        return wh.isWorkingDay && startTime >= wh.startTime && endTime <= wh.endTime
+        if (!wh.isWorkingDay) return false
+        if (startTime < wh.startTime || endTime > wh.endTime) return false
+
+        // DÜZELTME: Öğle arası kontrolü — randevu break time'a çakışıyor mu?
+        if (wh.breakStartTime != null && wh.breakEndTime != null) {
+            if (startTime < wh.breakEndTime!! && endTime > wh.breakStartTime!!) {
+                return false  // Randevu öğle arasına denk geliyor
+            }
+        }
+
+        return true
     }
 
     fun isTimeSlotBlocked(
@@ -1763,6 +1832,44 @@ class AvailabilityService(
             tenantId, staffId, date
         )
         return blocked.any { it.startTime < endTime && it.endTime > startTime }
+    }
+
+    /**
+     * "Herhangi bir personel" senaryosu: Verilen zaman diliminde müsait olan
+     * ilk personelin ID'sini döndürür. Hiçbiri müsait değilse null.
+     */
+    fun findAvailableStaff(
+        tenantId: String,
+        date: LocalDate,
+        startTime: LocalTime,
+        endTime: LocalTime
+    ): String? {
+        // Tüm aktif personeli al
+        val staffList = userRepository.findByTenantIdAndRoleInAndIsActiveTrue(
+            tenantId, listOf(Role.STAFF, Role.TENANT_ADMIN)
+        )
+
+        for (staff in staffList) {
+            val staffId = staff.id ?: continue
+
+            // 1. Çalışma saatleri uygun mu?
+            if (!isWithinWorkingHours(tenantId, staffId, date, startTime, endTime)) continue
+
+            // 2. Bloklanmış mı?
+            if (isTimeSlotBlocked(tenantId, staffId, date, startTime, endTime)) continue
+
+            // 3. Çakışan randevu var mı?
+            val conflicts = appointmentRepository.findConflictingAppointmentsWithLock(
+                tenantId = tenantId,
+                staffId = staffId,
+                date = date,
+                startTime = startTime,
+                endTime = endTime
+            )
+            if (conflicts.isEmpty()) return staffId  // Bu personel müsait!
+        }
+
+        return null  // Hiçbir personel müsait değil
     }
 }
 ```
