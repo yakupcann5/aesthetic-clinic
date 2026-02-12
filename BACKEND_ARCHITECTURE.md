@@ -4987,8 +4987,18 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
-          --character-set-server=utf8mb4
-          --collation-server=utf8mb4_turkish_ci
+        # NOT: character-set-server/collation Docker options'da geçersiz.
+        # Karakter seti init SQL veya application.yml connection-init-sql ile ayarlanır.
+
+      redis:                            # DÜZELTME: Redis service eklendi (rate limiting testleri için)
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
 
     steps:
       - uses: actions/checkout@v4
@@ -4997,21 +5007,25 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Cache Gradle packages                    # DÜZELTME: Gradle cache
+      - name: Cache Gradle packages
         uses: actions/cache@v4
         with:
-          path: ~/.gradle/caches
+          path: |                       # DÜZELTME: Wrapper dir de cache'lenmeli
+            ~/.gradle/caches
+            ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle.kts') }}
           restore-keys: ${{ runner.os }}-gradle-
 
       - name: Build & Test
-        run: ./gradlew build                           # Flyway otomatik çalışır (spring.flyway.enabled=true)
+        run: ./gradlew build
         env:
           DB_HOST: localhost
           DB_PORT: 3306
           DB_NAME: aesthetic_test
           DB_USERNAME: root
           DB_PASSWORD: test
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
           JWT_SECRET: test-secret-key-for-ci-pipeline-min-256-bits-long-enough
 
   docker:
@@ -5020,11 +5034,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Login to Registry          # DÜZELTME: Docker login eklendi
+        run: echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login registry.app.com -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
+
       - name: Build Docker Image
         run: docker build -t aesthetic-backend:${{ github.sha }} .
-      - name: Push to Registry
+
+      - name: Tag & Push                 # DÜZELTME: Hem SHA hem latest tag'i push
         run: |
+          docker tag aesthetic-backend:${{ github.sha }} registry.app.com/aesthetic-backend:${{ github.sha }}
           docker tag aesthetic-backend:${{ github.sha }} registry.app.com/aesthetic-backend:latest
+          docker push registry.app.com/aesthetic-backend:${{ github.sha }}
           docker push registry.app.com/aesthetic-backend:latest
 ```
 
@@ -5039,16 +5060,20 @@ jobs:
 services:
   app:
     image: registry.app.com/aesthetic-backend:latest
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"                         # DÜZELTME: Nginx arkasında — dışarıya port açma
     environment:
       - SPRING_PROFILES_ACTIVE=prod
+      - JAVA_OPTS=-Xmx768m -Xms512m   # DÜZELTME: 1G limit → 768m max heap
       - DB_HOST=mysql
       - DB_PORT=3306
       - DB_NAME=aesthetic_saas
       - DB_USERNAME=${DB_USERNAME}
       - DB_PASSWORD=${DB_PASSWORD}
       - JWT_SECRET=${JWT_SECRET}
+      - REDIS_HOST=redis               # DÜZELTME: Eksik Redis bağlantı bilgileri
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - FILE_PROVIDER=s3
       - S3_BUCKET=${S3_BUCKET}
       - S3_REGION=${S3_REGION}
@@ -5059,6 +5084,15 @@ services:
       - NETGSM_PASSWORD=${NETGSM_PASSWORD}
       - IYZICO_API_KEY=${IYZICO_API_KEY}
       - IYZICO_SECRET_KEY=${IYZICO_SECRET_KEY}
+      - IYZICO_BASE_URL=https://api.iyzipay.com  # DÜZELTME: Prod URL (sandbox değil)
+      - SENTRY_DSN=${SENTRY_DSN}
+      - FRONTEND_URL=${FRONTEND_URL}
+    healthcheck:                        # DÜZELTME: App healthcheck eklendi
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     depends_on:
       mysql:
         condition: service_healthy
@@ -5086,8 +5120,10 @@ services:
   mysql:
     image: mysql:8.0
     environment:
-      - MYSQL_ROOT_PASSWORD=${DB_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
       - MYSQL_DATABASE=aesthetic_saas
+      - MYSQL_USER=${DB_USERNAME}            # DÜZELTME: Root yerine ayrı uygulama kullanıcısı
+      - MYSQL_PASSWORD=${DB_PASSWORD}
     volumes:
       - mysql-data:/var/lib/mysql
       - ./mysql/my.cnf:/etc/mysql/conf.d/custom.cnf
@@ -5116,6 +5152,7 @@ services:
       - ./certbot/conf:/etc/letsencrypt
       - ./certbot/www:/var/www/certbot
     entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    restart: unless-stopped            # DÜZELTME: Restart policy eklendi
 
 volumes:
   mysql-data:
@@ -5125,23 +5162,75 @@ volumes:
 ### 24.2 Nginx Konfigürasyonu (Wildcard Subdomain + TLS)
 
 ```nginx
-# Tüm *.app.com subdomain'lerini Spring Boot'a yönlendir
+# ─── Rate Limiting Zone (Nginx seviyesinde) ───
+limit_req_zone $binary_remote_addr zone=api_limit:10m rate=30r/s;
+limit_req_zone $binary_remote_addr zone=auth_limit:10m rate=5r/m;
+
+# ─── HTTP → HTTPS Yönlendirme ───
 server {
-    listen 443 ssl;
+    listen 80;
     server_name *.app.com;
 
-    ssl_certificate /etc/letsencrypt/live/app.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/app.com/privkey.pem;
-
-    # HSTS (güvenlik)
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    # Let's Encrypt ACME challenge (certbot)
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
 
     location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# ─── HTTPS Server ───
+server {
+    listen 443 ssl http2;
+    server_name *.app.com;
+
+    # ─── SSL/TLS ───
+    ssl_certificate /etc/letsencrypt/live/app.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/app.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;       # DÜZELTME: Eski TLS protokollerini devre dışı bırak
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+
+    # ─── Güvenlik Header'ları ───
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    # ─── Body Limiti (dosya yükleme) ───
+    client_max_body_size 10m;
+
+    # ─── Let's Encrypt (HTTPS içinde de) ───
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # ─── Auth endpoint'leri — sıkı rate limit ───
+    location /api/auth/ {
+        limit_req zone=auth_limit burst=3 nodelay;
         proxy_pass http://app:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $remote_addr;     # DÜZELTME: spoofing önlemi — sadece gerçek IP
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 30s;
+        proxy_connect_timeout 10s;
+    }
+
+    # ─── Genel API ───
+    location / {
+        limit_req zone=api_limit burst=50 nodelay;
+        proxy_pass http://app:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;     # DÜZELTME: spoofing önlemi
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 60s;
     }
 }
 ```
@@ -5167,24 +5256,47 @@ collation-server = utf8mb4_turkish_ci   # DÜZELTME: Bölüm 8 ile tutarlı (Tü
 # 0 4 * * * /opt/scripts/backup.sh
 
 #!/bin/bash
+set -euo pipefail                   # DÜZELTME: Hata kontrolü aktif
+
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BACKUP_DIR=/opt/backups/mysql
+CONTAINER_NAME=aesthetic-mysql      # Docker container adı
 
-mysqldump -h localhost -u root -p${DB_PASSWORD} \
+# Dizin kontrolü
+mkdir -p "${BACKUP_DIR}"
+
+# DÜZELTME: Docker container içinden mysqldump + --defaults-extra-file (şifre CLI'da görünmez)
+docker exec "${CONTAINER_NAME}" \
+    mysqldump --defaults-extra-file=/etc/mysql/conf.d/backup-credentials.cnf \
     --single-transaction \
     --routines \
     --triggers \
-    aesthetic_saas | gzip > ${BACKUP_DIR}/aesthetic_saas_${TIMESTAMP}.sql.gz
+    aesthetic_saas | gzip > "${BACKUP_DIR}/aesthetic_saas_${TIMESTAMP}.sql.gz"
 
-# 30 günden eski yedekleri sil
-find ${BACKUP_DIR} -name "*.sql.gz" -mtime +30 -delete
+# Yedek dosya kontrolü
+if [ ! -f "${BACKUP_DIR}/aesthetic_saas_${TIMESTAMP}.sql.gz" ]; then
+    echo "HATA: Yedek dosyası oluşturulamadı!" >&2
+    exit 1
+fi
+
+# 30 günden eski yerel yedekleri sil
+find "${BACKUP_DIR}" -name "*.sql.gz" -mtime +30 -delete
 
 # S3'e yükle (off-site backup)
-aws s3 cp ${BACKUP_DIR}/aesthetic_saas_${TIMESTAMP}.sql.gz \
-    s3://${S3_BUCKET}/backups/mysql/
+aws s3 cp "${BACKUP_DIR}/aesthetic_saas_${TIMESTAMP}.sql.gz" \
+    "s3://${S3_BUCKET}/backups/mysql/"
+
+# NOT: S3 lifecycle policy ile 90 günden eski yedekler Glacier'a taşınmalı
 
 echo "Backup completed: aesthetic_saas_${TIMESTAMP}.sql.gz"
 ```
+
+> **NOT:** `backup-credentials.cnf` dosyası MySQL container'ına mount edilmeli:
+> ```ini
+> [mysqldump]
+> user=root
+> password=GIZLI_SIFRE
+> ```
 
 ### 24.5 Application Prodüksiyon Konfigürasyonu
 
@@ -5205,6 +5317,17 @@ spring:
         format_sql: false            # Prodüksiyonda log azalt
         generate_statistics: false
 
+  lifecycle:
+    timeout-per-shutdown-phase: 30s  # Graceful shutdown max bekleme
+
+  # Prodüksiyonda Swagger UI kapalı
+  # (SecurityConfig'te permitAll olsa bile erişilemez)
+springdoc:
+  swagger-ui:
+    enabled: false
+  api-docs:
+    enabled: false
+
 server:
   port: 8080
   shutdown: graceful                 # Graceful shutdown — in-flight request'ler tamamlanır
@@ -5215,9 +5338,8 @@ server:
       max: 200
       min-spare: 20
 
-  # DÜZELTME: Ayrı spring: bloğu kaldırıldı — yukarıdaki spring: altına taşındı
-  lifecycle:
-    timeout-per-shutdown-phase: 30s  # Shutdown'da max 30s bekle
+sentry:
+  traces-sample-rate: 0.1           # Prodüksiyonda %10 sampling (dev'deki 1.0'ı override)
 
 logging:
   level:
@@ -5251,11 +5373,12 @@ class TenantResolutionHealthIndicator(
 
 @Component
 class NotificationServiceHealthIndicator(
-    private val sendGridClient: SendGridClient
+    private val emailService: EmailService       // DÜZELTME: SendGridClient → EmailService interface
 ) : HealthIndicator {
     override fun health(): Health {
         return try {
-            sendGridClient.ping()
+            // SendGrid API'ye basit bir GET isteği yaparak erişilebilirliği kontrol et
+            emailService.healthCheck()
             Health.up().build()
         } catch (e: Exception) {
             Health.down()
@@ -5264,6 +5387,7 @@ class NotificationServiceHealthIndicator(
         }
     }
 }
+// NOT: EmailService interface'ine healthCheck() metodu eklenmelidir (Bölüm 18'de tanımlı)
 ```
 
 ### 25.2 Request Correlation ID
@@ -5347,12 +5471,13 @@ S3_SECRET_KEY=
 
 # ─── E-posta (SendGrid) ───
 SENDGRID_API_KEY=
-NOTIFICATION_FROM_EMAIL=no-reply@app.com
+NOTIFICATION_FROM_EMAIL=noreply@aestheticclinic.com  # DÜZELTME: Tutarlı default (Bölüm 9.1 ile)
+NOTIFICATION_FROM_NAME=Aesthetic Clinic               # DÜZELTME: Eksik env var eklendi
 
 # ─── SMS (Netgsm — Türkiye) ───
-NETGSM_USERCODE=
+NETGSM_USERNAME=                      # DÜZELTME: NETGSM_USERCODE → NETGSM_USERNAME (Bölüm 18 ile tutarlı)
 NETGSM_PASSWORD=
-NETGSM_HEADER=APPMESAJ
+NETGSM_SENDER_ID=APPMESAJ            # DÜZELTME: NETGSM_HEADER → NETGSM_SENDER_ID (Bölüm 18 ile tutarlı)
 
 # ─── Ödeme (iyzico — Türkiye) ───
 IYZICO_API_KEY=
