@@ -652,13 +652,14 @@ aesthetic-saas-backend/
 │   │   │   │   └── StaleDataCleanupJob.kt               # Eski veri temizliği
 │   │   │   │
 │   │   │   └── exception/                               # Hata yönetimi
-│   │   │       ├── GlobalExceptionHandler.kt            # @RestControllerAdvice (§7.7)
+│   │   │       ├── GlobalExceptionHandler.kt            # @RestControllerAdvice (§7.8)
 │   │   │       ├── TenantNotFoundException.kt           # 404 — Tenant bulunamadı
 │   │   │       ├── ResourceNotFoundException.kt         # 404 — Kaynak bulunamadı
 │   │   │       ├── DuplicateResourceException.kt        # 409 — Aynı kayıt var
 │   │   │       ├── AppointmentConflictException.kt      # 409 — Zaman çakışması
 │   │   │       ├── AccountLockedException.kt            # 423 — Hesap kilitli
 │   │   │       ├── PlanLimitExceededException.kt        # 429 — Plan limiti aşıldı
+│   │   │       ├── ClientBlacklistedException.kt       # 403 — Müşteri kara listede (no-show)
 │   │   │       ├── NotificationDeliveryException.kt     # Bildirim gönderim hatası (@Retryable)
 │   │   │       ├── PaymentException.kt                  # Ödeme hatası (iyzico)
 │   │   │       └── UnauthorizedException.kt             # 401 — Yetkisiz
@@ -834,6 +835,12 @@ class User : TenantAwareEntity() {
     // NOT: STAFF için bu alanlar kullanılmaz (login yapmaz)
     var failedLoginAttempts: Int = 0
     var lockedUntil: Instant? = null               // DÜZELTME: LocalDateTime → Instant (UTC)
+
+    // No-show takibi — CLIENT rolü için (3 kez gelmezse randevu oluşturamaz)
+    var noShowCount: Int = 0                       // Toplam no-show sayısı
+    var isBlacklisted: Boolean = false             // Kara liste durumu
+    var blacklistedAt: Instant? = null             // Ne zaman engellendi
+    var blacklistReason: String? = null            // "3 kez randevuya gelmedi"
 
     @CreationTimestamp
     val createdAt: Instant? = null                 // DÜZELTME: LocalDateTime → Instant (UTC)
@@ -1533,8 +1540,12 @@ class AppointmentService(
     private val serviceRepository: ServiceRepository,
     private val settingsRepository: SiteSettingsRepository,
     private val notificationService: NotificationService,
-    private val entityManager: EntityManager    // getReference() için gerekli
+    private val userRepository: UserRepository,        // Blacklist kontrolü + no-show sayacı
+    private val entityManager: EntityManager           // getReference() için gerekli
 ) {
+    companion object {
+        const val NO_SHOW_BLACKLIST_THRESHOLD = 3      // 3 kez gelmezse kara liste
+    }
     private val logger = LoggerFactory.getLogger(javaClass)
 
     /**
@@ -1547,6 +1558,16 @@ class AppointmentService(
     @Transactional(isolation = Isolation.READ_COMMITTED)
     fun createAppointment(request: CreateAppointmentRequest): Appointment {
         val tenantId = TenantContext.getTenantId()
+
+        // ── ⓪ Müşteri kara liste kontrolü ──
+        // 3 kez randevuya gelmeyen müşteri yeni randevu oluşturamaz
+        val existingClient = userRepository.findByEmailAndTenantId(request.clientEmail, tenantId)
+        if (existingClient?.isBlacklisted == true) {
+            throw ClientBlacklistedException(
+                "Bu müşteri daha önce ${existingClient.noShowCount} kez randevuya gelmediği için " +
+                "randevu oluşturulamaz. Lütfen işletmeyle iletişime geçin."
+            )
+        }
 
         // ── ① Geçmiş tarih kontrolü ──
         // KRİTİK: Tenant'ın timezone'unu kullan, sunucu timezone'u DEĞİL!
@@ -1721,6 +1742,26 @@ class AppointmentService(
         if (newStatus == AppointmentStatus.CANCELLED) {
             appointment.cancelledAt = Instant.now()
             appointment.cancellationReason = reason
+        }
+
+        // NO_SHOW durumunda müşteri sayacını artır + kara liste kontrolü
+        if (newStatus == AppointmentStatus.NO_SHOW) {
+            val tenantId = TenantContext.getTenantId()
+            appointment.client?.let { client ->
+                client.noShowCount++
+                if (client.noShowCount >= NO_SHOW_BLACKLIST_THRESHOLD) {
+                    client.isBlacklisted = true
+                    client.blacklistedAt = Instant.now()
+                    client.blacklistReason = "${client.noShowCount} kez randevuya gelmedi"
+                    logger.warn("[tenant={}] Müşteri kara listeye alındı: {} (no-show: {})",
+                        tenantId, client.email, client.noShowCount)
+                    // Kara liste bildirimi
+                    notificationService.sendClientBlacklistedNotification(client)
+                }
+                userRepository.save(client)
+            }
+            // No-show bildirimi (TENANT_ADMIN'a)
+            notificationService.sendNoShowNotification(appointment)
         }
 
         return appointmentRepository.save(appointment)
@@ -1899,6 +1940,22 @@ interface AppointmentRepository : JpaRepository<Appointment, String> {
     fun findCompletedWithoutReview(
         @Param("since") since: Instant,
         @Param("status") status: AppointmentStatus = AppointmentStatus.COMPLETED
+    ): List<Appointment>
+
+    /**
+     * Otomatik NO_SHOW tespiti için:
+     * Randevu bitiş saati + 1 saat geçmiş ve hala CONFIRMED olan randevuları bul.
+     */
+    @Query("""
+        SELECT a FROM Appointment a
+        WHERE a.tenantId = :tenantId
+        AND a.status = 'CONFIRMED'
+        AND (a.date < :cutoffDate OR (a.date = :cutoffDate AND a.endTime <= :cutoffTime))
+    """)
+    fun findConfirmedBeforeDateTime(
+        @Param("tenantId") tenantId: String,
+        @Param("cutoffDate") cutoffDate: LocalDate,
+        @Param("cutoffTime") cutoffTime: LocalTime
     ): List<Appointment>
 }
 ```
@@ -2176,11 +2233,15 @@ GET    /api/public/products/{slug}           # Ürün detayı
 GET    /api/public/blog                      # Yayınlanmış blog yazıları
 GET    /api/public/blog/{slug}               # Blog yazısı detayı
 GET    /api/public/gallery                   # Aktif galeri öğeleri
+GET    /api/public/staff                     # Aktif personel listesi (ad, fotoğraf, uzmanlık)
+       ?serviceId=xxx (opsiyonel)            # Bu hizmeti veren personeller
 GET    /api/public/availability              # Müsait randevu slotları
        ?date=2026-02-15
        &serviceId=xxx
-       &staffId=xxx (opsiyonel)
-POST   /api/public/appointments              # Randevu oluştur (misafir)
+       &staffId=xxx (opsiyonel)              # null ise tüm personelin slotları
+GET    /api/public/reviews                   # Onaylı değerlendirmeler (müşteri yorumları)
+       ?staffId=xxx (opsiyonel)
+POST   /api/public/appointments              # Randevu oluştur (misafir veya CLIENT)
 POST   /api/public/contact                   # İletişim formu gönder
 GET    /api/public/settings                  # Site ayarları (isim, adres, vb.)
 ```
@@ -2250,6 +2311,8 @@ PATCH  /api/admin/appointments/{id}/status   # Durum değiştir (confirm, cancel
 GET    /api/admin/patients                   # Hasta/müşteri listesi
 GET    /api/admin/patients/{id}              # Hasta detayı + randevu geçmişi
 PUT    /api/admin/patients/{id}              # Hasta bilgisi güncelle
+GET    /api/admin/patients/blacklisted       # Kara listedeki müşteriler
+PATCH  /api/admin/patients/{id}/unblock      # Kara listeden çıkar (noShowCount sıfırla)
 
 # Hasta Kayıtları (@RequiresModule(PATIENT_RECORDS) — add-on modül)
 GET    /api/admin/patients/{id}/record       # Yapılandırılmış hasta kaydı (JSON)
@@ -2389,6 +2452,9 @@ enum class ErrorCode {
     // Rate Limiting
     RATE_LIMIT_EXCEEDED,          // Çok fazla istek
 
+    // Blacklist
+    CLIENT_BLACKLISTED,           // Müşteri kara listede (no-show limit aşıldı)
+
     // General
     INTERNAL_ERROR                // Beklenmeyen hata
 }
@@ -2455,6 +2521,105 @@ data class AppointmentResponse(
     val totalPrice: BigDecimal,
     val status: AppointmentStatus,
     val createdAt: Instant?
+)
+
+// ── Staff DTO'ları ── (STAFF login yapmaz — oluşturma/güncelleme TENANT_ADMIN tarafından)
+
+data class CreateStaffRequest(
+    @field:NotBlank val name: String,
+    @field:Email val email: String,                 // İletişim amaçlı (login için değil!)
+    val phone: String? = null,
+    val image: String? = null,
+    val title: String? = null                       // "Uzman Diyetisyen", "Dr.", "Kuaför"
+)
+// NOT: passwordHash alanı YOK — STAFF login yapmaz, şifresi olmaz.
+// Service katmanında: user.passwordHash = null, user.role = Role.STAFF
+
+data class StaffPublicResponse(                     // GET /api/public/staff
+    val id: String,
+    val name: String,
+    val image: String?,
+    val title: String?                              // Uzmanlık alanı
+)
+
+// ── Hasta Kaydı DTO'ları ── (@RequiresModule(PATIENT_RECORDS))
+
+data class CreatePatientRecordRequest(
+    @field:NotBlank val clientId: String,
+    val structuredData: Map<String, Any> = emptyMap(),  // Sektöre göre JSON
+    val generalNotes: String? = null
+)
+
+data class UpdatePatientRecordRequest(
+    val structuredData: Map<String, Any>? = null,
+    val generalNotes: String? = null
+)
+
+data class PatientRecordResponse(
+    val id: String,
+    val clientId: String,
+    val clientName: String,
+    val structuredData: Map<String, Any>,
+    val generalNotes: String?,
+    val treatmentCount: Int,
+    val createdAt: Instant?
+)
+
+data class CreateTreatmentRequest(
+    @field:NotNull val treatmentDate: LocalDate,
+    @field:NotBlank val title: String,
+    val description: String? = null,
+    val appointmentId: String? = null,              // İlişkili randevu (opsiyonel)
+    val performedById: String? = null,              // Tedaviyi yapan personel
+    val treatmentData: Map<String, Any> = emptyMap(),
+    val attachments: List<String> = emptyList()     // Dosya URL'leri
+)
+
+data class TreatmentHistoryResponse(
+    val id: String,
+    val treatmentDate: LocalDate,
+    val title: String,
+    val description: String?,
+    val performedByName: String?,
+    val treatmentData: Map<String, Any>,
+    val attachments: List<String>,
+    val createdAt: Instant?
+)
+
+// ── Abonelik & Modül DTO'ları ──
+
+data class SubscribeRequest(
+    @field:NotNull val plan: SubscriptionPlan,
+    val modules: Set<FeatureModule> = emptySet(),   // İstenen add-on modüller
+    val billingPeriod: BillingPeriod = BillingPeriod.MONTHLY,
+    val industryBundle: IndustryBundle? = null       // Sektör paketi ile hızlı başlangıç
+)
+
+data class SubscriptionResponse(
+    val plan: SubscriptionPlan,
+    val status: SubscriptionStatus,
+    val modules: List<ModuleResponse>,
+    val maxStaff: Int,
+    val maxAppointmentsPerMonth: Int,
+    val monthlyPrice: BigDecimal,
+    val billingPeriod: BillingPeriod,
+    val startDate: LocalDate,
+    val endDate: LocalDate,
+    val autoRenew: Boolean
+)
+
+data class ModuleResponse(
+    val moduleKey: FeatureModule,
+    val isEnabled: Boolean,
+    val monthlyPrice: BigDecimal
+)
+
+// ── Diğer Eksik DTO'lar ──
+
+data class TimeSlotResponse(                        // GET /api/public/availability
+    val startTime: LocalTime,
+    val endTime: LocalTime,
+    val isAvailable: Boolean
 )
 
 // Not: Her entity için ayrı Request/Response DTO oluşturulur.
@@ -2600,7 +2765,9 @@ class AuthService(
         }
 
         // Şifre kontrolü
-        if (!passwordEncoder.matches(request.password, user.passwordHash)) {
+        // DÜZELTME: passwordHash nullable (STAFF için null) — NPE koruması
+        val hash = user.passwordHash
+        if (hash == null || !passwordEncoder.matches(request.password, hash)) {
             user.failedLoginAttempts++
             if (user.failedLoginAttempts >= MAX_FAILED_ATTEMPTS) {
                 user.lockedUntil = now.plus(LOCK_DURATION_MINUTES, ChronoUnit.MINUTES)
@@ -2834,6 +3001,9 @@ class RateLimitFilter : OncePerRequestFilter() {
         RateLimitRule("/api/auth/forgot-password",   3,  Duration.ofMinutes(1)),   // DÜZELTME: Password reset spam koruması
         RateLimitRule("/api/public/contact",         3,  Duration.ofMinutes(1)),   // Spam koruması
         RateLimitRule("/api/public/appointments",   10, Duration.ofMinutes(1)),
+        RateLimitRule("/api/public/staff",           60, Duration.ofMinutes(1)),   // Personel listesi
+        RateLimitRule("/api/public/availability",    60, Duration.ofMinutes(1)),   // Müsaitlik sorgusu
+        RateLimitRule("/api/public/reviews",         60, Duration.ofMinutes(1)),   // Değerlendirmeler
         RateLimitRule("/api/admin/upload",           20, Duration.ofMinutes(1)),
         RateLimitRule("/api/admin/",               100, Duration.ofMinutes(1)),   // Genel admin
         RateLimitRule("/api/public/",              200, Duration.ofMinutes(1))    // Genel public
@@ -3103,6 +3273,14 @@ class GlobalExceptionHandler {
         )
     }
 
+    /** 403 — Müşteri kara listede (no-show limit aşıldı) */
+    @ExceptionHandler(ClientBlacklistedException::class)
+    fun handleClientBlacklisted(ex: ClientBlacklistedException): ResponseEntity<ErrorResponse> {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(
+            ErrorResponse(error = ex.message ?: "Müşteri kara listede", code = ErrorCode.CLIENT_BLACKLISTED)
+        )
+    }
+
     /** 500 — Beklenmeyen hatalar */
     @ExceptionHandler(Exception::class)
     fun handleGeneral(ex: Exception): ResponseEntity<ErrorResponse> {
@@ -3249,13 +3427,13 @@ CREATE TABLE tenants (
     id VARCHAR(36) NOT NULL PRIMARY KEY,
     slug VARCHAR(100) NOT NULL UNIQUE,
     name VARCHAR(255) NOT NULL,
-    business_type ENUM('BEAUTY_CLINIC','DENTAL_CLINIC','BARBER_SHOP','HAIR_SALON') NOT NULL,
+    business_type ENUM('BEAUTY_CLINIC','DENTAL_CLINIC','BARBER_SHOP','HAIR_SALON','DIETITIAN','PHYSIOTHERAPIST','MASSAGE_SALON','VETERINARY','GENERAL') NOT NULL,
     phone VARCHAR(20) DEFAULT '',
     email VARCHAR(255) DEFAULT '',
     address TEXT DEFAULT '',
     logo_url VARCHAR(500),
     custom_domain VARCHAR(255) UNIQUE,           -- DÜZELTME: domain → custom_domain
-    plan ENUM('TRIAL','BASIC','PROFESSIONAL','ENTERPRISE') DEFAULT 'TRIAL',
+    plan ENUM('TRIAL','STARTER','PROFESSIONAL','BUSINESS','ENTERPRISE') DEFAULT 'TRIAL',
     trial_end_date DATE,                         -- DÜZELTME: Eksik alan eklendi
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
@@ -3268,13 +3446,17 @@ CREATE TABLE users (
     tenant_id VARCHAR(36) NOT NULL,
     name VARCHAR(255) NOT NULL,
     email VARCHAR(255) NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
+    password_hash VARCHAR(255) NULL,              -- STAFF rolü login yapmaz → NULL olabilir
     phone VARCHAR(20),
     image VARCHAR(500),
     role ENUM('PLATFORM_ADMIN','TENANT_ADMIN','STAFF','CLIENT') NOT NULL DEFAULT 'CLIENT',
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     failed_login_attempts INT NOT NULL DEFAULT 0,
     locked_until TIMESTAMP(6) NULL,
+    no_show_count INT NOT NULL DEFAULT 0,          -- No-show takibi (3 kez → kara liste)
+    is_blacklisted BOOLEAN NOT NULL DEFAULT FALSE,
+    blacklisted_at TIMESTAMP(6) NULL,
+    blacklist_reason VARCHAR(255) NULL,
     created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
     updated_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
 
@@ -3599,13 +3781,15 @@ CREATE TABLE refresh_tokens (
 CREATE TABLE subscriptions (
     id VARCHAR(36) NOT NULL PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL,
-    plan VARCHAR(20) NOT NULL DEFAULT 'TRIAL',            -- TRIAL, BASIC, PROFESSIONAL, ENTERPRISE  -- DÜZELTME: PRO → PROFESSIONAL (entity enum ile tutarlı)
+    plan VARCHAR(20) NOT NULL DEFAULT 'TRIAL',            -- TRIAL, STARTER, PROFESSIONAL, BUSINESS, ENTERPRISE
     start_date DATE NOT NULL,
     end_date DATE NOT NULL,
     auto_renew BOOLEAN NOT NULL DEFAULT TRUE,
     max_staff INT NOT NULL DEFAULT 1,
-    max_appointments_per_month INT NOT NULL DEFAULT 50,
-    max_storage_mb INT NOT NULL DEFAULT 100,
+    max_appointments_per_month INT NOT NULL DEFAULT 100,  -- TRIAL limiti: 100
+    max_storage_mb INT NOT NULL DEFAULT 500,              -- TRIAL limiti: 500MB
+    monthly_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    billing_period VARCHAR(20) NOT NULL DEFAULT 'MONTHLY',  -- MONTHLY, YEARLY
     status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',         -- ACTIVE, PAST_DUE, CANCELLED, EXPIRED  -- DÜZELTME: SUSPENDED → PAST_DUE (entity enum ile tutarlı)
     created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
     updated_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
@@ -3801,15 +3985,27 @@ CREATE TABLE treatment_history (
     INDEX idx_treatment_date (tenant_id, treatment_date DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
 
--- V19__alter_subscriptions_add_modules_and_billing.sql
+-- V19__alter_subscriptions_add_billing.sql
+-- NOT: enabled_modules JSON alanı kullanılmaz — SubscriptionModule entity (relational) tercih edilir.
 ALTER TABLE subscriptions
-    ADD COLUMN enabled_modules JSON DEFAULT '{}' AFTER max_storage_mb,
-    ADD COLUMN monthly_price DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER enabled_modules,
+    ADD COLUMN monthly_price DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER max_storage_mb,
     ADD COLUMN billing_period VARCHAR(20) NOT NULL DEFAULT 'MONTHLY' AFTER monthly_price;
 
--- V20__alter_users_nullable_password.sql
--- STAFF rolü login yapmaz — passwordHash nullable olmalı
-ALTER TABLE users MODIFY COLUMN password_hash VARCHAR(255) NULL;
+-- NOT: V20 kaldırıldı — password_hash zaten CREATE TABLE'da NULL olarak tanımlandı.
+-- NOT: no_show_count, is_blacklisted vb. zaten CREATE TABLE'da tanımlandı.
+
+-- V20__alter_tenants_expand_business_type.sql
+-- Yeni sektörler: DIETITIAN, PHYSIOTHERAPIST, MASSAGE_SALON, VETERINARY, GENERAL
+-- Plan değişiklikleri: BASIC → STARTER, yeni BUSINESS
+ALTER TABLE tenants
+    MODIFY COLUMN business_type ENUM(
+        'BEAUTY_CLINIC','DENTAL_CLINIC','BARBER_SHOP','HAIR_SALON',
+        'DIETITIAN','PHYSIOTHERAPIST','MASSAGE_SALON','VETERINARY','GENERAL'
+    ) NOT NULL,
+    MODIFY COLUMN plan ENUM('TRIAL','STARTER','PROFESSIONAL','BUSINESS','ENTERPRISE') DEFAULT 'TRIAL';
+
+-- Mevcut BASIC planları STARTER'a güncelle
+UPDATE tenants SET plan = 'STARTER' WHERE plan = 'BASIC';
 ```
 
 ---
@@ -4036,7 +4232,7 @@ dependencies {
     // OpenAPI / Swagger
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.6.0")
 
-    // File Upload (MIME type detection — Bölüm 7.5'te Tika().detect() kullanılıyor)
+    // File Upload (MIME type detection — Bölüm 7.6'da Tika().detect() kullanılıyor)
     implementation("org.apache.tika:tika-core:3.0.0")
 
     // Redis (rate limiting + distributed cache)
@@ -4635,10 +4831,11 @@ class Subscription : TenantAwareEntity() {             // DÜZELTME: TenantAware
     @Enumerated(EnumType.STRING)
     var status: SubscriptionStatus = SubscriptionStatus.ACTIVE
 
-    // Modül sistemi — hangi opsiyonel modüller aktif
-    // Core modüller (randevu, müşteri yönetimi, bildirim, tema) HER pakette bulunur
-    @Column(columnDefinition = "JSON")
-    var enabledModules: String = "{}"     // {"blog":true,"products":false,"gallery":true,...}
+    // Modül sistemi — SubscriptionModule entity ile yönetilir (relational)
+    // NOT: enabledModules JSON alanı KULLANILMAZ — SubscriptionModule tercih edilir.
+    // Core modüller (randevu, müşteri yönetimi, bildirim, tema) HER pakette bulunur.
+    @OneToMany(mappedBy = "subscription", fetch = FetchType.LAZY, cascade = [CascadeType.ALL])
+    val modules: MutableList<SubscriptionModule> = mutableListOf()
 
     // Faturalama
     @Column(precision = 10, scale = 2)
@@ -4940,6 +5137,10 @@ interface SubscriptionModuleRepository : JpaRepository<SubscriptionModule, Strin
 | Diş Kliniği | PROFESSIONAL + PATIENT_RECORDS + GALLERY | 699 TL/ay |
 | Fizyoterapi | PROFESSIONAL + PATIENT_RECORDS | 649 TL/ay |
 | Masaj Salonu | STARTER + GALLERY + REVIEWS | 279 TL/ay |
+| Kuaför Salonu | STARTER + GALLERY + PRODUCTS | 279 TL/ay |
+| Diyetisyen | PROFESSIONAL + PATIENT_RECORDS | 649 TL/ay |
+| Veteriner | PROFESSIONAL + PATIENT_RECORDS + GALLERY | 699 TL/ay |
+| Genel | STARTER (sadece core) | 199 TL/ay |
 
 ```kotlin
 // Sektör paketleri — önceden tanımlanmış modül kombinasyonları
@@ -4972,6 +5173,26 @@ enum class IndustryBundle(
         SubscriptionPlan.STARTER,
         setOf(FeatureModule.GALLERY, FeatureModule.REVIEWS),
         BigDecimal("279.00")
+    ),
+    HAIR_SALON_BUNDLE(
+        SubscriptionPlan.STARTER,
+        setOf(FeatureModule.GALLERY, FeatureModule.PRODUCTS),
+        BigDecimal("279.00")
+    ),
+    DIETITIAN_BUNDLE(
+        SubscriptionPlan.PROFESSIONAL,
+        setOf(FeatureModule.PATIENT_RECORDS),
+        BigDecimal("649.00")
+    ),
+    VETERINARY_BUNDLE(
+        SubscriptionPlan.PROFESSIONAL,
+        setOf(FeatureModule.PATIENT_RECORDS, FeatureModule.GALLERY),
+        BigDecimal("699.00")
+    ),
+    GENERAL_BUNDLE(
+        SubscriptionPlan.STARTER,
+        emptySet(),                                       // Modül yok — sadece core özellikler
+        BigDecimal("199.00")
     )
 }
 ```
@@ -5112,14 +5333,16 @@ enum class NotificationType {
     APPOINTMENT_RESCHEDULED,          // Randevu zamanı değişti
     WELCOME,                          // Yeni kayıt hoşgeldin
     PASSWORD_RESET,                   // Şifre sıfırlama
-    REVIEW_REQUEST                    // Randevu sonrası değerlendirme isteği
+    REVIEW_REQUEST,                   // Randevu sonrası değerlendirme isteği
+    APPOINTMENT_NO_SHOW,              // Müşteri gelmedi (TENANT_ADMIN'a bildirim)
+    CLIENT_BLACKLISTED_NOTICE         // Müşteri kara listeye alındı
 }
 enum class NotificationChannel { EMAIL, SMS }
 enum class DeliveryStatus { PENDING, SENT, FAILED, BOUNCED }
 
 /**
  * Tüm özel exception sınıfları — proje yapısında exception/ paketi altında bulunur.
- * GlobalExceptionHandler (§7.7) her birini ayrı HTTP durum koduyla eşleştirir.
+ * GlobalExceptionHandler (§7.8) her birini ayrı HTTP durum koduyla eşleştirir.
  */
 
 // Auth & Security
@@ -5142,6 +5365,9 @@ class NotificationDeliveryException(message: String, cause: Throwable? = null) :
 
 // Plan
 class PlanLimitExceededException(message: String) : RuntimeException(message)                   // 429
+
+// Blacklist
+class ClientBlacklistedException(message: String) : RuntimeException(message)                   // 403
 ```
 
 ### 18.2.1 NotificationService — Bildirim Gönderim Servisi
@@ -5262,6 +5488,51 @@ class NotificationService(
             "serviceName" to ctx.serviceName
         )
 
+        sendNotification(ctx, template, variables)
+    }
+
+    /**
+     * No-show bildirimi — TENANT_ADMIN'a "müşteri randevuya gelmedi" bilgisi gönderir.
+     */
+    @Async("taskExecutor")
+    fun sendNoShowNotification(appointment: Appointment) {
+        val ctx = toContext(appointment)
+        val template = notificationTemplateRepository
+            .findByTenantIdAndType(ctx.tenantId, NotificationType.APPOINTMENT_NO_SHOW) ?: return
+
+        val variables = mapOf(
+            "clientName" to ctx.clientName,
+            "serviceName" to ctx.serviceName,
+            "date" to ctx.date,
+            "time" to ctx.time
+        )
+        sendNotification(ctx, template, variables)
+    }
+
+    /**
+     * Kara liste bildirimi — TENANT_ADMIN'a "müşteri kara listeye alındı" bilgisi gönderir.
+     */
+    @Async("taskExecutor")
+    fun sendClientBlacklistedNotification(client: User) {
+        val tenantId = client.tenantId  // TenantAwareEntity'den
+        val template = notificationTemplateRepository
+            .findByTenantIdAndType(tenantId, NotificationType.CLIENT_BLACKLISTED_NOTICE) ?: return
+
+        val variables = mapOf(
+            "clientName" to client.name,
+            "clientEmail" to client.email,
+            "noShowCount" to client.noShowCount.toString()
+        )
+
+        // TENANT_ADMIN'a bildirim gönder
+        val ctx = NotificationContext(
+            tenantId = tenantId,
+            recipientEmail = "", // SettingsService'den alınmalı (tenant admin email)
+            clientName = client.name,
+            serviceName = "",
+            date = "",
+            time = ""
+        )
         sendNotification(ctx, template, variables)
     }
 
@@ -5535,6 +5806,7 @@ class ScheduledJobs(
     private val tenantAwareScheduler: TenantAwareScheduler,
     private val subscriptionService: SubscriptionService,
     private val appointmentRepository: AppointmentRepository,
+    private val appointmentService: AppointmentService,              // NO_SHOW updateStatus çağrısı
     private val contactMessageRepository: ContactMessageRepository,  // DÜZELTME: Eksik dependency
     private val notificationService: NotificationService,
     private val siteSettingsRepository: SiteSettingsRepository       // DÜZELTME: Tenant timezone
@@ -5581,6 +5853,36 @@ class ScheduledJobs(
                     notificationService.sendReviewRequest(appointment)
                 } catch (e: Exception) {
                     logger.error("Değerlendirme isteği gönderilemedi — appointment={}", appointment.id, e)
+                }
+            }
+        }
+    }
+
+    /**
+     * Otomatik NO_SHOW işaretleme.
+     * Randevu bitiş saati + 1 saat geçmiş ve status hala CONFIRMED → NO_SHOW yap.
+     * NO_SHOW yapıldığında müşteri sayacı artırılır, 3 kez → kara liste.
+     */
+    @Scheduled(fixedRate = 3_600_000)  // Her saat
+    fun markNoShowAppointments() {
+        tenantAwareScheduler.executeForAllTenants { tenant ->
+            val settings = siteSettingsRepository.findByTenantId(tenant.id!!)
+            val tenantZone = ZoneId.of(settings?.timezone ?: "Europe/Istanbul")
+            val now = ZonedDateTime.now(tenantZone)
+            // Randevu endTime + 1 saat geçmişse ve hala CONFIRMED → NO_SHOW
+            val cutoffDate = now.minusHours(1).toLocalDate()
+            val cutoffTime = now.minusHours(1).toLocalTime()
+
+            val noShows = appointmentRepository.findConfirmedBeforeDateTime(
+                tenant.id!!, cutoffDate, cutoffTime
+            )
+            noShows.forEach { appointment ->
+                try {
+                    appointmentService.updateStatus(appointment.id!!, AppointmentStatus.NO_SHOW)
+                    logger.info("[tenant={}] Randevu otomatik NO_SHOW: {} (tarih: {}, client: {})",
+                        tenant.id, appointment.id, appointment.date, appointment.client?.email)
+                } catch (e: Exception) {
+                    logger.error("[tenant={}] NO_SHOW işaretlenemedi: {}", tenant.id, appointment.id, e)
                 }
             }
         }
