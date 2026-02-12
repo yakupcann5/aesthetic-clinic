@@ -484,8 +484,8 @@ aesthetic-saas-backend/
 │   │   │   │
 │   │   │   ├── config/                                  # Konfigürasyon
 │   │   │   │   ├── SecurityConfig.kt                    # Spring Security + JWT
-│   │   │   │   ├── JwtConfig.kt                         # JWT token ayarları
-│   │   │   │   ├── WebConfig.kt                         # CORS, interceptors
+│   │   │   │   ├── JwtConfig.kt                         # JWT token ayarları (JwtProperties)
+│   │   │   │   ├── WebConfig.kt                         # CORS, interceptors, ModuleGuardInterceptor kaydı
 │   │   │   │   ├── CacheConfig.kt                       # Redis cache config
 │   │   │   │   ├── AsyncConfig.kt                       # Async executor + TenantAwareTaskDecorator
 │   │   │   │   ├── OpenApiConfig.kt                     # Swagger UI config
@@ -515,7 +515,10 @@ aesthetic-saas-backend/
 │   │   │   │   ├── user/
 │   │   │   │   │   ├── User.kt
 │   │   │   │   │   ├── Role.kt                          # Enum: PLATFORM_ADMIN, TENANT_ADMIN, STAFF, CLIENT
-│   │   │   │   │   └── ClientNote.kt                    # Müşteri notları (staff tarafından)
+│   │   │   │   │   └── ClientNote.kt                    # Müşteri notları (TENANT_ADMIN tarafından)
+│   │   │   │   ├── patient/
+│   │   │   │   │   ├── PatientRecord.kt                 # Hasta/danışan kaydı (yapılandırılmış veri)
+│   │   │   │   │   └── TreatmentHistory.kt              # Tedavi geçmişi
 │   │   │   │   ├── service/
 │   │   │   │   │   ├── Service.kt
 │   │   │   │   │   └── ServiceCategory.kt
@@ -537,6 +540,9 @@ aesthetic-saas-backend/
 │   │   │   │   ├── payment/
 │   │   │   │   │   ├── Payment.kt                       # Ödeme kayıtları (iyzico)
 │   │   │   │   │   ├── Subscription.kt                  # Tenant abonelik yönetimi
+│   │   │   │   │   ├── SubscriptionModule.kt            # Modül add-on kayıtları
+│   │   │   │   │   ├── FeatureModule.kt                 # Enum: BLOG, PRODUCTS, GALLERY, PATIENT_RECORDS, ...
+│   │   │   │   │   ├── IndustryBundle.kt                # Sektör paketleri (hazır modül kombinasyonları)
 │   │   │   │   │   └── Invoice.kt                       # Fatura kayıtları
 │   │   │   │   ├── notification/
 │   │   │   │   │   ├── Notification.kt                  # Bildirim kayıtları
@@ -557,6 +563,9 @@ aesthetic-saas-backend/
 │   │   │   │   ├── ReviewRepository.kt
 │   │   │   │   ├── PaymentRepository.kt
 │   │   │   │   ├── SubscriptionRepository.kt
+│   │   │   │   ├── SubscriptionModuleRepository.kt
+│   │   │   │   ├── PatientRecordRepository.kt
+│   │   │   │   ├── TreatmentHistoryRepository.kt
 │   │   │   │   ├── NotificationRepository.kt
 │   │   │   │   ├── RefreshTokenRepository.kt
 │   │   │   │   ├── ContactMessageRepository.kt
@@ -575,6 +584,9 @@ aesthetic-saas-backend/
 │   │   │   │   ├── ReviewService.kt                     # Değerlendirme CRUD
 │   │   │   │   ├── PaymentService.kt                    # Ödeme işlemleri (iyzico)
 │   │   │   │   ├── SubscriptionService.kt               # Abonelik yönetimi
+│   │   │   │   ├── ModuleAccessService.kt              # Modül erişim kontrolü
+│   │   │   │   ├── PatientRecordService.kt             # Hasta/danışan kaydı CRUD
+│   │   │   │   ├── PlanLimitService.kt                 # Plan limitleri (personel, randevu)
 │   │   │   │   ├── ContactService.kt                    # İletişim mesajları
 │   │   │   │   ├── SettingsService.kt                   # Site ayarları
 │   │   │   │   ├── FileUploadService.kt                 # Görsel yükleme (S3/MinIO)
@@ -589,7 +601,8 @@ aesthetic-saas-backend/
 │   │   │   │   ├── GalleryController.kt                 # /api/admin/gallery/**
 │   │   │   │   ├── AppointmentController.kt             # /api/admin/appointments/**
 │   │   │   │   ├── AvailabilityController.kt            # /api/public/availability + /api/admin/availability
-│   │   │   │   ├── ReviewController.kt                  # /api/admin/reviews/**
+│   │   │   │   ├── ReviewController.kt                  # /api/admin/reviews/** @RequiresModule(REVIEWS)
+│   │   │   │   ├── PatientRecordController.kt           # /api/admin/patients/** @RequiresModule(PATIENT_RECORDS)
 │   │   │   │   ├── PaymentController.kt                 # /api/admin/payments/** + /api/webhooks/iyzico
 │   │   │   │   ├── ContactController.kt                 # /api/admin/messages/**
 │   │   │   │   ├── SettingsController.kt                # /api/admin/settings/**
@@ -738,14 +751,49 @@ enum class BusinessType {
     BEAUTY_CLINIC,      // Güzellik kliniği
     DENTAL_CLINIC,      // Diş kliniği
     BARBER_SHOP,        // Berber
-    HAIR_SALON          // Kuaför salonu
+    HAIR_SALON,         // Kuaför salonu
+    DIETITIAN,          // Diyetisyen
+    PHYSIOTHERAPIST,    // Fizyoterapist
+    MASSAGE_SALON,      // Masaj salonu
+    VETERINARY,         // Veteriner kliniği
+    GENERAL             // Genel (sektör belirtmeyen işletmeler)
 }
 
+// Sektör bazlı önerilen modül kombinasyonları — onboarding sırasında varsayılan olarak önerilir
+val RECOMMENDED_MODULES: Map<BusinessType, Set<FeatureModule>> = mapOf(
+    BusinessType.BEAUTY_CLINIC to setOf(
+        FeatureModule.BLOG, FeatureModule.GALLERY, FeatureModule.PRODUCTS, FeatureModule.REVIEWS
+    ),
+    BusinessType.DENTAL_CLINIC to setOf(
+        FeatureModule.PATIENT_RECORDS, FeatureModule.GALLERY
+    ),
+    BusinessType.BARBER_SHOP to setOf(
+        FeatureModule.GALLERY
+    ),
+    BusinessType.HAIR_SALON to setOf(
+        FeatureModule.GALLERY, FeatureModule.PRODUCTS
+    ),
+    BusinessType.DIETITIAN to setOf(
+        FeatureModule.PATIENT_RECORDS
+    ),
+    BusinessType.PHYSIOTHERAPIST to setOf(
+        FeatureModule.PATIENT_RECORDS
+    ),
+    BusinessType.MASSAGE_SALON to setOf(
+        FeatureModule.GALLERY, FeatureModule.REVIEWS
+    ),
+    BusinessType.VETERINARY to setOf(
+        FeatureModule.PATIENT_RECORDS
+    ),
+    BusinessType.GENERAL to emptySet()
+)
+
 enum class SubscriptionPlan {
-    TRIAL,              // 14 gün deneme
-    BASIC,              // Temel özellikler
-    PROFESSIONAL,       // Gelişmiş özellikler
-    ENTERPRISE          // Sınırsız, özel destek
+    TRIAL,              // 14 gün deneme (tüm modüller açık — değerlendirme amaçlı)
+    STARTER,            // Temel paket: 1 personel, 100 randevu/ay, 500MB
+    PROFESSIONAL,       // Profesyonel: 5 personel, 500 randevu/ay, 2GB
+    BUSINESS,           // İşletme: 15 personel, 2000 randevu/ay, 5GB
+    ENTERPRISE          // Kurumsal: Sınırsız, özel destek, 20GB
 }
 ```
 
@@ -771,8 +819,8 @@ class User : TenantAwareEntity() {
     @Column(nullable = false)
     var email: String = ""
 
-    @Column(nullable = false)
-    var passwordHash: String = ""
+    @Column(nullable = true)                        // STAFF rolü için null (login yapmaz)
+    var passwordHash: String? = null
 
     var phone: String? = null
     var image: String? = null
@@ -783,6 +831,7 @@ class User : TenantAwareEntity() {
     var isActive: Boolean = true
 
     // Güvenlik: başarısız giriş denemesi sayacı (brute force koruması)
+    // NOT: STAFF için bu alanlar kullanılmaz (login yapmaz)
     var failedLoginAttempts: Int = 0
     var lockedUntil: Instant? = null               // DÜZELTME: LocalDateTime → Instant (UTC)
 
@@ -805,10 +854,13 @@ class User : TenantAwareEntity() {
 }
 
 enum class Role {
-    PLATFORM_ADMIN,     // Tüm platforma erişim (SaaS sahibi)
-    TENANT_ADMIN,       // İşletme sahibi — tüm tenant verilerine erişim
-    STAFF,              // Personel — randevular, hastalar
-    CLIENT              // Müşteri — kendi randevuları, profili
+    PLATFORM_ADMIN,     // Tüm platforma erişim (SaaS sahibi) — Login: ✅
+    TENANT_ADMIN,       // İşletme sahibi — tüm tenant verilerine erişim — Login: ✅
+    STAFF,              // Personel — Login: ❌ (şifre yok, JWT yok)
+                        //   TENANT_ADMIN tarafından eklenen personel kaydı.
+                        //   Randevu atanması, çalışma saatleri, performans takibi için kullanılır.
+                        //   Admin paneline erişimi YOKTUR.
+    CLIENT              // Müşteri — kendi randevuları, profili — Login: ✅
 }
 
 // NOT: PLATFORM_ADMIN kullanıcıları da users tablosunda tutulur ancak özel tenant_id
@@ -816,6 +868,10 @@ enum class Role {
 // Hibernate filter'ı devre dışı bırakır (tüm tenant verilerine erişim).
 // Alternatif: Ayrı bir platform_admins tablosu oluşturulabilir ancak bu, auth
 // sistemini karmaşıklaştırır. Tek tablo + magic tenant_id daha pragmatiktir.
+
+// NOT: STAFF login YAPMAZ. Sadece TENANT_ADMIN tarafından oluşturulan bir personel
+// profilidir. passwordHash = null olmalıdır. AuthService.login() STAFF girişini engeller.
+// TENANT_ADMIN personellerini kendi admin panelinden ekler/düzenler/siler.
 
 // ClientNote.kt — Personel'in müşteri hakkında özel notları
 @Entity
@@ -837,6 +893,107 @@ class ClientNote : TenantAwareEntity() {
 
     @CreationTimestamp
     val createdAt: Instant? = null               // DÜZELTME: LocalDateTime → Instant (UTC)
+}
+```
+
+### 4.2.1 PatientRecord & TreatmentHistory (Hasta/Danışan Kaydı Modülü)
+
+> **Modül:** `FeatureModule.PATIENT_RECORDS` — Opsiyonel add-on modül.
+> **Kullanım:** Diş kliniği, diyetisyen, fizyoterapist gibi yapılandırılmış hasta verisi gerektiren sektörler.
+> **Fark:** `ClientNote` düz metin nottur. `PatientRecord` yapılandırılmış veri (JSON) tutar.
+
+```kotlin
+@Entity
+@Table(
+    name = "patient_records",
+    uniqueConstraints = [
+        // Bir müşterinin bir tenant'ta tek kaydı olabilir
+        UniqueConstraint(name = "uk_patient_client_tenant", columnNames = ["client_id", "tenant_id"])
+    ]
+)
+class PatientRecord : TenantAwareEntity() {
+    @Id @GeneratedValue(strategy = GenerationType.UUID)
+    val id: String? = null
+
+    @OneToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "client_id", nullable = false)
+    lateinit var client: User                  // Hangi müşteriye ait
+
+    // Sektöre göre değişen yapılandırılmış veri (JSON)
+    // Diş hekimi: {"allergies":["Lateks"],"bloodType":"A+","chronicDiseases":[]}
+    // Diyetisyen: {"height":175,"weight":80,"targetWeight":70,"allergies":["Gluten"]}
+    // Fizyoterapist: {"injuryArea":"Sol omuz","painLevel":7,"mobilityScore":4}
+    @Column(columnDefinition = "JSON")
+    var structuredData: String = "{}"
+
+    // Genel metin notları (tüm sektörler)
+    @Column(columnDefinition = "TEXT")
+    var generalNotes: String? = null
+
+    @OneToMany(mappedBy = "patientRecord", fetch = FetchType.LAZY, cascade = [CascadeType.ALL])
+    val treatments: MutableList<TreatmentHistory> = mutableListOf()
+
+    @CreationTimestamp val createdAt: Instant? = null
+    @UpdateTimestamp var updatedAt: Instant? = null
+}
+
+@Entity
+@Table(
+    name = "treatment_history",
+    indexes = [
+        Index(name = "idx_treatment_patient", columnList = "patient_record_id"),
+        Index(name = "idx_treatment_date", columnList = "tenant_id, treatment_date DESC")
+    ]
+)
+class TreatmentHistory : TenantAwareEntity() {
+    @Id @GeneratedValue(strategy = GenerationType.UUID)
+    val id: String? = null
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "patient_record_id", nullable = false)
+    lateinit var patientRecord: PatientRecord
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "appointment_id")
+    var appointment: Appointment? = null          // İlişkili randevu (opsiyonel)
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "performed_by")
+    var performedBy: User? = null                 // Tedaviyi yapan personel (STAFF veya TENANT_ADMIN)
+
+    var treatmentDate: LocalDate = LocalDate.now()
+    var title: String = ""                        // "Dolgu uygulaması", "Diyet planı güncelleme"
+
+    @Column(columnDefinition = "TEXT")
+    var description: String? = null               // Detaylı açıklama
+
+    // Tedaviye özgü yapılandırılmış veri (JSON)
+    // Diş: {"toothNumber":14,"procedure":"Dolgu","material":"Kompozit"}
+    // Diyetisyen: {"weight":78,"bmi":25.5,"dietPlan":"1500kcal","measurements":{"waist":85}}
+    // Fizyoterapist: {"exercises":["Omuz rotasyonu","Band çekme"],"sets":3,"reps":12}
+    @Column(columnDefinition = "JSON")
+    var treatmentData: String = "{}"
+
+    // Dosya ekleri (röntgen, diyet listesi PDF, egzersiz videosu vb.)
+    @Column(columnDefinition = "JSON")
+    var attachments: String = "[]"                // [{"fileName":"rontgen.jpg","path":"...","type":"image/jpeg"}]
+
+    @CreationTimestamp val createdAt: Instant? = null
+}
+```
+
+**PatientRecordRepository:**
+
+```kotlin
+interface PatientRecordRepository : JpaRepository<PatientRecord, String> {
+    fun findByClientIdAndTenantId(clientId: String, tenantId: String): PatientRecord?
+    fun findByTenantId(tenantId: String, pageable: Pageable): Page<PatientRecord>
+}
+
+interface TreatmentHistoryRepository : JpaRepository<TreatmentHistory, String> {
+    fun findByPatientRecordIdOrderByTreatmentDateDesc(
+        patientRecordId: String, pageable: Pageable
+    ): Page<TreatmentHistory>
 }
 ```
 
@@ -1262,9 +1419,20 @@ class SiteSettings : TenantAwareEntity() {
     var timezone: String = "Europe/Istanbul"   // Tenant bazlı timezone desteği
     var locale: String = "tr"                  // Dil ayarı
     var cancellationPolicyHours: Int = 24      // Ücretsiz iptal süresi (saat)
+    var defaultSlotDurationMinutes: Int = 30   // Varsayılan randevu süresi (dakika)
 
+    // Tema özelleştirme — JSON yapısı:
+    // {
+    //   "logoUrl": "/uploads/tenant-uuid/logo.png",
+    //   "faviconUrl": "/uploads/tenant-uuid/favicon.ico",
+    //   "primaryColor": "#e03aff",
+    //   "secondaryColor": "#14b8a6",
+    //   "fontFamily": "Inter",
+    //   "headerStyle": "fixed",          // "fixed" | "static"
+    //   "heroImageUrl": "/uploads/tenant-uuid/hero.jpg"
+    // }
     @Column(columnDefinition = "JSON")
-    var themeSettings: String = "{}"           // Renk, logo vb. özelleştirme
+    var themeSettings: String = "{}"
 }
 
 // Review.kt — Müşteri değerlendirme sistemi
@@ -2028,7 +2196,7 @@ POST   /api/auth/reset-password              # Token ile şifre sıfırla
 GET    /api/auth/me                          # Mevcut kullanıcı bilgisi
 ```
 
-### 6.3 Admin API (TENANT_ADMIN + STAFF)
+### 6.3 Admin API (TENANT_ADMIN — STAFF login yapmaz)
 
 ```
 # Dashboard
@@ -2078,10 +2246,18 @@ POST   /api/admin/appointments               # Admin'den randevu oluştur
 PUT    /api/admin/appointments/{id}          # Randevu güncelle
 PATCH  /api/admin/appointments/{id}/status   # Durum değiştir (confirm, cancel, complete)
 
-# Hastalar / Müşteriler
-GET    /api/admin/patients                   # Hasta listesi
+# Hastalar / Müşteriler (core — tüm planlarda)
+GET    /api/admin/patients                   # Hasta/müşteri listesi
 GET    /api/admin/patients/{id}              # Hasta detayı + randevu geçmişi
 PUT    /api/admin/patients/{id}              # Hasta bilgisi güncelle
+
+# Hasta Kayıtları (@RequiresModule(PATIENT_RECORDS) — add-on modül)
+GET    /api/admin/patients/{id}/record       # Yapılandırılmış hasta kaydı (JSON)
+PUT    /api/admin/patients/{id}/record       # Hasta kaydı güncelle
+POST   /api/admin/patients/{id}/treatments   # Yeni tedavi kaydı ekle
+GET    /api/admin/patients/{id}/treatments   # Tedavi geçmişi listesi
+PUT    /api/admin/treatments/{id}            # Tedavi kaydı güncelle
+DELETE /api/admin/treatments/{id}            # Tedavi kaydı sil
 
 # İletişim Mesajları
 GET    /api/admin/messages                   # Mesaj listesi
@@ -2111,6 +2287,16 @@ PUT    /api/admin/working-hours/staff/{id}   # Personel saatlerini güncelle
 GET    /api/admin/blocked-slots              # Bloklanmış zaman dilimleri
 POST   /api/admin/blocked-slots              # Zaman dilimi blokla
 DELETE /api/admin/blocked-slots/{id}         # Bloklamayı kaldır
+
+# Abonelik & Modül Yönetimi
+GET    /api/admin/billing/current-plan       # Mevcut plan + kullanım istatistikleri + aktif modüller
+GET    /api/admin/billing/modules            # Aktif modül listesi
+POST   /api/admin/billing/modules/{key}      # Modül etkinleştir (add-on satın al)
+DELETE /api/admin/billing/modules/{key}      # Modül devre dışı bırak
+GET    /api/admin/billing/invoices           # Fatura listesi
+POST   /api/admin/billing/subscribe          # Plan seçimi + ödeme başlatma
+POST   /api/admin/billing/upgrade            # Plan yükseltme
+POST   /api/admin/billing/cancel             # Abonelik iptali
 
 # Site Ayarları
 GET    /api/admin/settings                   # Site ayarlarını getir
@@ -2281,8 +2467,11 @@ data class AppointmentResponse(
 
 ### 7.1 JWT Token Yapısı + Server-Side Revocation
 
+> **Login yapabilen roller:** PLATFORM_ADMIN, TENANT_ADMIN, CLIENT (3 rol)
+> **Login YAPAMAYAN rol:** STAFF — şifresi yok, JWT üretilmez. Sadece TENANT_ADMIN tarafından yönetilen personel kaydıdır.
+
 ```
-Access Token (15 dk ömür):
+Access Token (1 saat ömür — tüm login yapabilen roller aynı):
 {
   "sub": "user-uuid",
   "tenantId": "tenant-uuid",
@@ -2291,17 +2480,21 @@ Access Token (15 dk ömür):
   "email": "admin@salon1.com",
   "tokenFamily": "family-uuid",     // Refresh token theft detection
   "iat": 1707580800,
-  "exp": 1707581700
+  "exp": 1707584400                  // +3600 saniye (1 saat)
 }
 
-Refresh Token (7 gün ömür, DB'de saklanır):
+Refresh Token (rol bazlı ömür, DB'de saklanır):
+  - PLATFORM_ADMIN:  1 gün   (en hassas hesap — kısa ömür)
+  - TENANT_ADMIN:   30 gün   (günlük işletme yönetimi)
+  - CLIENT:         60 gün   (kullanıcı deneyimi — sık login istenmez)
+  - STAFF:          ❌ Token almaz (login yapmaz)
 {
   "sub": "user-uuid",
   "type": "refresh",
   "jti": "unique-token-id",         // DB'deki refresh_tokens.id ile eşleşir
   "family": "family-uuid",          // Token ailesi (theft detection)
   "iat": 1707580800,
-  "exp": 1708185600
+  "exp": 1710172800                  // Rol bazlı süre
 }
 ```
 
@@ -2339,18 +2532,46 @@ class RefreshToken(
 ### 7.2 Brute Force Koruması
 
 ```kotlin
+// JwtConfig.kt — JWT token ayarları (application.yml'den yüklenir)
+@ConfigurationProperties(prefix = "jwt")
+data class JwtProperties(
+    val secret: String,
+    val accessTokenExpiration: Long,                         // 3600000 ms (1 saat)
+    val refreshTokenExpiration: RefreshTokenExpiration
+) {
+    data class RefreshTokenExpiration(
+        val platformAdmin: Long,                             // 86400000 ms (1 gün)
+        val tenantAdmin: Long,                               // 2592000000 ms (30 gün)
+        val client: Long                                     // 5184000000 ms (60 gün)
+    )
+
+    /**
+     * Rol bazlı refresh token süresi döndürür.
+     * STAFF rolü login yapamaz — bu metot çağrılmamalıdır.
+     */
+    fun getRefreshExpirationForRole(role: Role): Long = when (role) {
+        Role.PLATFORM_ADMIN -> refreshTokenExpiration.platformAdmin
+        Role.TENANT_ADMIN   -> refreshTokenExpiration.tenantAdmin
+        Role.CLIENT         -> refreshTokenExpiration.client
+        Role.STAFF          -> throw IllegalArgumentException("STAFF rolü login yapamaz — token üretilmez")
+    }
+}
+
 @Service
 class AuthService(
     private val userRepository: UserRepository,
     private val passwordEncoder: PasswordEncoder,
     private val jwtTokenProvider: JwtTokenProvider,
     private val refreshTokenRepository: RefreshTokenRepository,
-    private val settingsRepository: SiteSettingsRepository
+    private val settingsRepository: SiteSettingsRepository,
+    private val jwtProperties: JwtProperties                  // Rol bazlı token süreleri
 ) {
     companion object {
         private val logger = LoggerFactory.getLogger(AuthService::class.java)
         const val MAX_FAILED_ATTEMPTS = 5
         const val LOCK_DURATION_MINUTES = 15L
+        // Login yapabilen roller (STAFF hariç)
+        val LOGINABLE_ROLES = setOf(Role.PLATFORM_ADMIN, Role.TENANT_ADMIN, Role.CLIENT)
     }
 
     @Transactional
@@ -2358,6 +2579,12 @@ class AuthService(
         val tenantId = TenantContext.getTenantId()
         val user = userRepository.findByEmailAndTenantId(request.email, tenantId)
             ?: throw UnauthorizedException("Geçersiz e-posta veya şifre")
+
+        // STAFF login engeli — STAFF şifresi olmayan personel kaydıdır
+        if (user.role == Role.STAFF) {
+            logger.warn("[tenant={}] STAFF login denemesi engellendi: {}", tenantId, user.email)
+            throw UnauthorizedException("Bu hesap ile giriş yapılamaz")
+        }
 
         // Hesap kilitli mi kontrol et
         // KRİTİK: lockedUntil Instant (UTC) — timezone dönüşümü gereksiz
@@ -2389,9 +2616,10 @@ class AuthService(
         user.lockedUntil = null
         userRepository.save(user)
 
-        // Token pair oluştur
+        // Token pair oluştur (rol bazlı refresh token süresi)
         val family = UUID.randomUUID().toString()
-        return generateTokenPair(user, family)
+        val refreshExpiration = jwtProperties.getRefreshExpirationForRole(user.role)
+        return generateTokenPair(user, family, refreshExpiration)
     }
 }
 ```
@@ -2433,8 +2661,8 @@ class SecurityConfig(
                     .requestMatchers("/api/webhooks/**").permitAll()  // Dış servis callback (iyzico vb.)
                     // Platform admin
                     .requestMatchers("/api/platform/**").hasAuthority("PLATFORM_ADMIN")    // DÜZELTME: hasRole() ROLE_ prefix ekler — authority ile eşleşmez
-                    // Admin endpoints
-                    .requestMatchers("/api/admin/**").hasAnyAuthority("TENANT_ADMIN", "STAFF")  // DÜZELTME: hasAnyRole() ROLE_ prefix ekler
+                    // Admin endpoints — sadece TENANT_ADMIN (STAFF login yapmaz!)
+                    .requestMatchers("/api/admin/**").hasAuthority("TENANT_ADMIN")
                     // Authenticated
                     .anyRequest().authenticated()
             }
@@ -2479,7 +2707,100 @@ class SecurityConfig(
 }
 ```
 
-### 7.4 Rate Limiting
+### 7.4 Modül Erişim Guard (ModuleGuardInterceptor)
+
+Admin API endpoint'lerine modül bazlı erişim kontrolü. Tenant'ın modülü aktif değilse 403 döner.
+
+```kotlin
+/**
+ * Custom annotation — Controller metotlarında modül erişim gereksinimini belirtir.
+ * Örnek: @RequiresModule(FeatureModule.BLOG)
+ */
+@Target(AnnotationTarget.FUNCTION, AnnotationTarget.CLASS)
+@Retention(AnnotationRetention.RUNTIME)
+annotation class RequiresModule(val value: FeatureModule)
+
+/**
+ * Spring MVC Interceptor — Her admin API çağrısında modül erişim kontrolü yapar.
+ * @RequiresModule annotation'ı olan endpoint'lerde tenant'ın ilgili modüle erişimi kontrol edilir.
+ * Modül kapalıysa → 403 Forbidden (PlanLimitExceededException)
+ */
+@Component
+class ModuleGuardInterceptor(
+    private val moduleAccessService: ModuleAccessService
+) : HandlerInterceptor {
+
+    override fun preHandle(
+        request: HttpServletRequest,
+        response: HttpServletResponse,
+        handler: Any
+    ): Boolean {
+        if (handler !is HandlerMethod) return true
+
+        // @RequiresModule annotation'ı var mı?
+        val annotation = handler.getMethodAnnotation(RequiresModule::class.java)
+            ?: handler.beanType.getAnnotation(RequiresModule::class.java)
+            ?: return true  // Annotation yoksa → modül kontrolü gerekmez
+
+        val tenantId = TenantContext.getTenantId()
+        moduleAccessService.requireAccess(tenantId, annotation.value)
+
+        return true
+    }
+}
+
+// WebConfig'de interceptor kaydı:
+@Configuration
+class WebConfig(private val moduleGuardInterceptor: ModuleGuardInterceptor) : WebMvcConfigurer {
+    override fun addInterceptors(registry: InterceptorRegistry) {
+        registry.addInterceptor(moduleGuardInterceptor)
+            .addPathPatterns("/api/admin/**")    // Sadece admin endpoint'leri
+    }
+}
+```
+
+**Controller'larda kullanım örnekleri:**
+
+```kotlin
+// Blog Controller — BLOG modülü gerektirir
+@RestController
+@RequestMapping("/api/admin/blog")
+@RequiresModule(FeatureModule.BLOG)                 // Tüm endpoint'ler BLOG modülü gerektirir
+class BlogAdminController(private val blogService: BlogService) {
+    @GetMapping fun list(pageable: Pageable) = blogService.findAll(pageable)
+    @PostMapping fun create(@Valid @RequestBody req: CreateBlogPostRequest) = blogService.create(req)
+    // ...
+}
+
+// Product Controller — PRODUCTS modülü gerektirir
+@RestController
+@RequestMapping("/api/admin/products")
+@RequiresModule(FeatureModule.PRODUCTS)
+class ProductAdminController(private val productService: ProductService) { /* ... */ }
+
+// Gallery Controller — GALLERY modülü gerektirir
+@RestController
+@RequestMapping("/api/admin/gallery")
+@RequiresModule(FeatureModule.GALLERY)
+class GalleryAdminController(private val galleryService: GalleryService) { /* ... */ }
+
+// Patient Records Controller — PATIENT_RECORDS modülü gerektirir
+@RestController
+@RequestMapping("/api/admin/patients")
+@RequiresModule(FeatureModule.PATIENT_RECORDS)
+class PatientRecordController(private val patientService: PatientRecordService) { /* ... */ }
+
+// Review Controller — REVIEWS modülü gerektirir
+@RestController
+@RequestMapping("/api/admin/reviews")
+@RequiresModule(FeatureModule.REVIEWS)
+class ReviewAdminController(private val reviewService: ReviewService) { /* ... */ }
+
+// Randevu, Dashboard, Settings gibi core controller'lar @RequiresModule KULLANMAZ
+// Core modüller her pakette dahildir
+```
+
+### 7.5 Rate Limiting
 
 ```kotlin
 // RateLimitConfig.kt — Bucket4j ile rate limiting
@@ -2554,7 +2875,7 @@ class RateLimitFilter : OncePerRequestFilter() {
 // implementation("com.bucket4j:bucket4j-core:8.10.1")
 ```
 
-### 7.5 Dosya Yükleme Güvenliği
+### 7.6 Dosya Yükleme Güvenliği
 
 ```kotlin
 import org.apache.tika.Tika                              // DÜZELTME: Eksik import eklendi
@@ -2622,7 +2943,7 @@ class SecureFileUploadService(
 
 > **GÜVENLİK NOTU:** Yüklenen dosyalar **ayrı bir domain**'den (örn: `cdn.app.com`) servis edilmelidir. Ana domain'den servis edilirse, SVG/HTML dosyaları XSS saldırısı vektörü olur.
 
-### 7.5.1 StorageProvider Interface
+### 7.6.1 StorageProvider Interface
 
 ```kotlin
 import java.io.InputStream
@@ -2665,7 +2986,7 @@ class LocalStorageProvider(
 // @Service @Profile("prod") class S3StorageProvider(...) : StorageProvider { ... }
 ```
 
-### 7.6 Rol Tabanlı Erişim Kontrolü
+### 7.7 Rol Tabanlı Erişim Kontrolü
 
 ```kotlin
 // Controller'da kullanım
@@ -2674,9 +2995,9 @@ class LocalStorageProvider(
 class ServiceController(private val serviceService: ServiceManagementService) {
 
     @GetMapping
-    @PreAuthorize("hasAnyAuthority('TENANT_ADMIN', 'STAFF')")  // DÜZELTME: hasAnyRole → hasAnyAuthority
+    @PreAuthorize("hasAuthority('TENANT_ADMIN')")  // STAFF login yapmaz — sadece TENANT_ADMIN
     fun listServices(pageable: Pageable): PagedResponse<ServiceResponse> {
-        // STAFF ve TENANT_ADMIN görebilir
+        // Sadece TENANT_ADMIN görebilir (STAFF login yapmaz)
     }
 
     @PostMapping
@@ -2693,7 +3014,7 @@ class ServiceController(private val serviceService: ServiceManagementService) {
 }
 ```
 
-### 7.7 GlobalExceptionHandler
+### 7.8 GlobalExceptionHandler
 
 ```kotlin
 @RestControllerAdvice
@@ -3419,6 +3740,76 @@ CREATE TABLE consent_records (
     INDEX idx_consent_tenant_user (tenant_id, user_id),
     INDEX idx_consent_type (tenant_id, consent_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+-- V17__create_subscription_modules_table.sql
+CREATE TABLE subscription_modules (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    subscription_id VARCHAR(36) NOT NULL,
+    module_key VARCHAR(30) NOT NULL,              -- BLOG, PRODUCTS, GALLERY, PATIENT_RECORDS, ...
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    monthly_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    activated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    deactivated_at TIMESTAMP(6) NULL,
+    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE,
+
+    UNIQUE KEY uk_sub_module (subscription_id, module_key),
+    INDEX idx_sub_modules_sub (subscription_id),
+    INDEX idx_sub_modules_tenant (tenant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+-- V18__create_patient_records_table.sql
+CREATE TABLE patient_records (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    client_id VARCHAR(36) NOT NULL,
+    structured_data JSON DEFAULT '{}',            -- Sektöre göre değişen yapılandırılmış veri
+    general_notes TEXT NULL,
+    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    FOREIGN KEY (client_id) REFERENCES users(id) ON DELETE CASCADE,
+
+    UNIQUE KEY uk_patient_client_tenant (client_id, tenant_id),
+    INDEX idx_patient_tenant (tenant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+CREATE TABLE treatment_history (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    patient_record_id VARCHAR(36) NOT NULL,
+    appointment_id VARCHAR(36) NULL,
+    performed_by VARCHAR(36) NULL,
+    treatment_date DATE NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    description TEXT NULL,
+    treatment_data JSON DEFAULT '{}',             -- Tedaviye özgü yapılandırılmış veri
+    attachments JSON DEFAULT '[]',                -- Dosya ekleri listesi
+    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    FOREIGN KEY (patient_record_id) REFERENCES patient_records(id) ON DELETE CASCADE,
+    FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE SET NULL,
+    FOREIGN KEY (performed_by) REFERENCES users(id) ON DELETE SET NULL,
+
+    INDEX idx_treatment_patient (patient_record_id),
+    INDEX idx_treatment_date (tenant_id, treatment_date DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+-- V19__alter_subscriptions_add_modules_and_billing.sql
+ALTER TABLE subscriptions
+    ADD COLUMN enabled_modules JSON DEFAULT '{}' AFTER max_storage_mb,
+    ADD COLUMN monthly_price DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER enabled_modules,
+    ADD COLUMN billing_period VARCHAR(20) NOT NULL DEFAULT 'MONTHLY' AFTER monthly_price;
+
+-- V20__alter_users_nullable_password.sql
+-- STAFF rolü login yapmaz — passwordHash nullable olmalı
+ALTER TABLE users MODIFY COLUMN password_hash VARCHAR(255) NULL;
 ```
 
 ---
@@ -3489,8 +3880,13 @@ spring:
 # JWT
 jwt:
   secret: ${JWT_SECRET}                   # Zorunlu! Min 256-bit key. Güvenlik için default yok.
-  access-token-expiration: 900000       # 15 dakika (ms)
-  refresh-token-expiration: 604800000   # 7 gün (ms)
+  access-token-expiration: 3600000        # 1 saat (ms) — tüm login yapabilen roller aynı
+  # Refresh token süreleri rol bazlı:
+  refresh-token-expiration:
+    platform-admin: 86400000              # 1 gün (ms) — en hassas hesap
+    tenant-admin: 2592000000              # 30 gün (ms) — günlük işletme yönetimi
+    client: 5184000000                    # 60 gün (ms) — kullanıcı deneyimi
+  # NOT: STAFF rolü login YAPMAZ → token almaz
 
 # File Upload
 file:
@@ -4232,16 +4628,32 @@ class Subscription : TenantAwareEntity() {             // DÜZELTME: TenantAware
     var autoRenew: Boolean = true
 
     // Plan limitleri (plan seçimi sırasında service tarafından set edilir)
-    var maxStaff: Int = 1                 // TRIAL: 1, BASIC: 3, PRO: 10, ENT: sınırsız
-    var maxAppointmentsPerMonth: Int = 50 // TRIAL: 50, BASIC: 200, PRO: 1000, ENT: sınırsız
-    var maxStorageMb: Int = 100           // Dosya yükleme limiti
+    var maxStaff: Int = 1                 // TRIAL: 1, STARTER: 1, PRO: 5, BUS: 15, ENT: sınırsız
+    var maxAppointmentsPerMonth: Int = 100 // TRIAL: 100, STARTER: 100, PRO: 500, BUS: 2000, ENT: sınırsız
+    var maxStorageMb: Int = 500           // Dosya yükleme limiti (MB)
 
     @Enumerated(EnumType.STRING)
     var status: SubscriptionStatus = SubscriptionStatus.ACTIVE
-    // DÜZELTME: isActive kaldırıldı — status == ACTIVE ile kontrol edilir
+
+    // Modül sistemi — hangi opsiyonel modüller aktif
+    // Core modüller (randevu, müşteri yönetimi, bildirim, tema) HER pakette bulunur
+    @Column(columnDefinition = "JSON")
+    var enabledModules: String = "{}"     // {"blog":true,"products":false,"gallery":true,...}
+
+    // Faturalama
+    @Column(precision = 10, scale = 2)
+    var monthlyPrice: BigDecimal = BigDecimal.ZERO   // Toplam aylık fiyat (paket + modüller)
+
+    @Enumerated(EnumType.STRING)
+    var billingPeriod: BillingPeriod = BillingPeriod.MONTHLY
 
     @CreationTimestamp val createdAt: Instant? = null   // DÜZELTME: LocalDateTime → Instant (UTC)
     @UpdateTimestamp var updatedAt: Instant? = null
+}
+
+enum class BillingPeriod {
+    MONTHLY,            // Aylık faturalama
+    YEARLY              // Yıllık faturalama (%20 indirim)
 }
 
 @Entity
@@ -4353,7 +4765,218 @@ class PlanLimitService(
 }
 ```
 
-### 17.3 iyzico Entegrasyonu (Türkiye)
+### 17.3 Modül Sistemi (Feature Flags)
+
+Farklı sektörler farklı modüllere ihtiyaç duyar. Bir berber ürün satışı istemez, bir diş hekimi blog istemez. Her tenant ihtiyacına göre modülleri açıp kapayabilir.
+
+**Core Modüller (HER pakette, kapatılamaz):**
+- Randevu sistemi
+- Müşteri yönetimi (CRUD + notlar)
+- Çalışma saatleri ayarı
+- Temel bildirimler (email)
+- Tema özelleştirme (logo, renk)
+- Temel raporlar
+
+**Opsiyonel Modüller (add-on olarak satın alınır):**
+
+```kotlin
+enum class FeatureModule {
+    BLOG,                   // Blog yazıları, SEO, kategoriler
+    PRODUCTS,               // Ürün kataloğu, stok takibi
+    GALLERY,                // Önce/sonra görselleri
+    PATIENT_RECORDS,        // Hasta/danışan kaydı, tedavi geçmişi, dosya ekleri
+    ADVANCED_REPORTS,       // Detaylı analitik, gelir raporları, Excel/PDF export
+    SMS_NOTIFICATIONS,      // SMS hatırlatma (kullanım başına ücretli)
+    CUSTOM_DOMAIN,          // Özel domain desteği (salon.com)
+    REVIEWS                 // Müşteri değerlendirmeleri, puanlama
+}
+```
+
+**SubscriptionModule Entity:**
+
+```kotlin
+@Entity
+@Table(
+    name = "subscription_modules",
+    uniqueConstraints = [
+        UniqueConstraint(
+            name = "uk_sub_module",
+            columnNames = ["subscription_id", "module_key"]
+        )
+    ]
+)
+class SubscriptionModule : TenantAwareEntity() {
+    @Id @GeneratedValue(strategy = GenerationType.UUID)
+    val id: String? = null
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "subscription_id", nullable = false)
+    lateinit var subscription: Subscription
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "module_key", nullable = false)
+    var moduleKey: FeatureModule = FeatureModule.BLOG
+
+    var isEnabled: Boolean = true
+
+    @Column(precision = 10, scale = 2)
+    var monthlyPrice: BigDecimal = BigDecimal.ZERO    // Bu modülün aylık ücreti
+
+    var activatedAt: Instant = Instant.now()
+    var deactivatedAt: Instant? = null
+
+    @CreationTimestamp val createdAt: Instant? = null
+    @UpdateTimestamp var updatedAt: Instant? = null
+}
+```
+
+**ModuleAccessService — Modül erişim kontrolü:**
+
+```kotlin
+@Service
+class ModuleAccessService(
+    private val subscriptionModuleRepository: SubscriptionModuleRepository,
+    private val subscriptionRepository: SubscriptionRepository
+) {
+    /**
+     * Tenant'ın belirtilen modüle erişimi var mı kontrol eder.
+     * TRIAL plan: Tüm modüller açık (değerlendirme amaçlı).
+     * Diğer planlar: SubscriptionModule tablosunda aktif kayıt olmalı.
+     */
+    fun hasAccess(tenantId: String, module: FeatureModule): Boolean {
+        val subscription = subscriptionRepository
+            .findByTenantIdAndStatus(tenantId, SubscriptionStatus.ACTIVE)
+            ?: return false
+
+        // TRIAL — tüm modüller açık (değerlendirme süresi)
+        if (subscription.plan == SubscriptionPlan.TRIAL) return true
+
+        return subscriptionModuleRepository
+            .existsBySubscriptionIdAndModuleKeyAndIsEnabledTrue(subscription.id!!, module)
+    }
+
+    /**
+     * Modül erişimi yoksa PlanLimitExceededException fırlatır.
+     * API controller'larında çağrılır.
+     */
+    fun requireAccess(tenantId: String, module: FeatureModule) {
+        if (!hasAccess(tenantId, module)) {
+            throw PlanLimitExceededException(
+                "Bu özellik (${module.name}) mevcut planınıza dahil değildir. " +
+                "Modülü eklemek için abonelik ayarlarınızı güncelleyin."
+            )
+        }
+    }
+
+    /**
+     * Tenant'ın aktif modüllerinin listesini döndürür.
+     */
+    fun getEnabledModules(tenantId: String): Set<FeatureModule> {
+        val subscription = subscriptionRepository
+            .findByTenantIdAndStatus(tenantId, SubscriptionStatus.ACTIVE)
+            ?: return emptySet()
+
+        // TRIAL — tüm modüller
+        if (subscription.plan == SubscriptionPlan.TRIAL) {
+            return FeatureModule.entries.toSet()
+        }
+
+        return subscriptionModuleRepository
+            .findBySubscriptionIdAndIsEnabledTrue(subscription.id!!)
+            .map { it.moduleKey }
+            .toSet()
+    }
+}
+```
+
+**SubscriptionModuleRepository:**
+
+```kotlin
+interface SubscriptionModuleRepository : JpaRepository<SubscriptionModule, String> {
+    fun existsBySubscriptionIdAndModuleKeyAndIsEnabledTrue(
+        subscriptionId: String, moduleKey: FeatureModule
+    ): Boolean
+
+    fun findBySubscriptionIdAndIsEnabledTrue(
+        subscriptionId: String
+    ): List<SubscriptionModule>
+
+    fun findBySubscriptionId(subscriptionId: String): List<SubscriptionModule>
+}
+```
+
+### 17.4 Abonelik Paketleri & Fiyatlandırma
+
+**"Temel Paket + Modül Add-on" modeli:** Her tenant bir temel paket seçer (personel/randevu limiti), üstüne ihtiyaç duyduğu modülleri add-on olarak ekler.
+
+**A) Temel Paketler (Core — herkes alır):**
+
+| Paket | Personel | Randevu/ay | Depolama | Fiyat (örnek) |
+|-------|----------|------------|----------|---------------|
+| STARTER | 1 kişi | 100 | 500MB | 199 TL/ay |
+| PROFESSIONAL | 5 kişi | 500 | 2GB | 499 TL/ay |
+| BUSINESS | 15 kişi | 2.000 | 5GB | 999 TL/ay |
+| ENTERPRISE | Sınırsız | Sınırsız | 20GB | Özel fiyat |
+
+**B) Modül Add-on'lar (opsiyonel):**
+
+| Modül | Açıklama | Fiyat (örnek) |
+|-------|----------|---------------|
+| BLOG | Blog yazıları, SEO, kategoriler | +99 TL/ay |
+| PRODUCTS | Ürün kataloğu, stok takibi | +149 TL/ay |
+| GALLERY | Önce/sonra görselleri | +49 TL/ay |
+| PATIENT_RECORDS | Tedavi geçmişi, tıbbi notlar, dosya ekleri | +199 TL/ay |
+| ADVANCED_REPORTS | Detaylı analitik, gelir raporları | +99 TL/ay |
+| SMS_NOTIFICATIONS | SMS hatırlatma (kullanım başına) | 0.15 TL/SMS |
+| CUSTOM_DOMAIN | Özel domain (salon.com) | +49 TL/ay |
+| REVIEWS | Müşteri yorumları, puanlama | +49 TL/ay |
+
+**C) Sektör Paketleri (hazır kombinasyonlar, indirimli):**
+
+| Sektör Paketi | İçerik | İndirimli Fiyat |
+|---------------|--------|-----------------|
+| Kuaför/Berber | STARTER + GALLERY | 229 TL/ay |
+| Güzellik Kliniği | PROFESSIONAL + BLOG + GALLERY + REVIEWS | 649 TL/ay |
+| Diş Kliniği | PROFESSIONAL + PATIENT_RECORDS + GALLERY | 699 TL/ay |
+| Fizyoterapi | PROFESSIONAL + PATIENT_RECORDS | 649 TL/ay |
+| Masaj Salonu | STARTER + GALLERY + REVIEWS | 279 TL/ay |
+
+```kotlin
+// Sektör paketleri — önceden tanımlanmış modül kombinasyonları
+enum class IndustryBundle(
+    val plan: SubscriptionPlan,
+    val modules: Set<FeatureModule>,
+    val monthlyPrice: BigDecimal
+) {
+    BARBER_BUNDLE(
+        SubscriptionPlan.STARTER,
+        setOf(FeatureModule.GALLERY),
+        BigDecimal("229.00")
+    ),
+    BEAUTY_CLINIC_BUNDLE(
+        SubscriptionPlan.PROFESSIONAL,
+        setOf(FeatureModule.BLOG, FeatureModule.GALLERY, FeatureModule.REVIEWS),
+        BigDecimal("649.00")
+    ),
+    DENTAL_CLINIC_BUNDLE(
+        SubscriptionPlan.PROFESSIONAL,
+        setOf(FeatureModule.PATIENT_RECORDS, FeatureModule.GALLERY),
+        BigDecimal("699.00")
+    ),
+    PHYSIOTHERAPY_BUNDLE(
+        SubscriptionPlan.PROFESSIONAL,
+        setOf(FeatureModule.PATIENT_RECORDS),
+        BigDecimal("649.00")
+    ),
+    MASSAGE_SALON_BUNDLE(
+        SubscriptionPlan.STARTER,
+        setOf(FeatureModule.GALLERY, FeatureModule.REVIEWS),
+        BigDecimal("279.00")
+    )
+}
+```
+
+### 17.5 iyzico Entegrasyonu (Türkiye)
 
 ```kotlin
 // API Endpoint'leri:
