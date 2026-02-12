@@ -414,19 +414,11 @@ class TenantAwareScheduler(
     }
 }
 
-// Kullanım örneği:
-@Component
-class AppointmentReminderJob(
-    private val tenantAwareScheduler: TenantAwareScheduler,
-    private val notificationService: NotificationService
-) {
-    @Scheduled(fixedRate = 300_000)  // Her 5 dakikada (tüm tenant'lar iterate edilir)
-    fun sendReminders() {
-        tenantAwareScheduler.executeForAllTenants { tenant ->
-            notificationService.sendUpcomingAppointmentReminders()
-        }
-    }
-}
+// Kullanım örneği (tam implementasyon: Bkz. §18.3 AppointmentReminderJob):
+// tenantAwareScheduler.executeForAllTenants { tenant ->
+//     // Tenant context otomatik set edilir, iş mantığını çalıştır
+//     notificationService.sendUpcomingAppointmentReminders()
+// }
 ```
 
 ### 2.6 Tenant-Aware Cache Stratejisi
@@ -591,17 +583,17 @@ aesthetic-saas-backend/
 │   │   │   ├── controller/                              # REST API Controller'lar
 │   │   │   │   ├── AuthController.kt                    # /api/auth/**
 │   │   │   │   ├── TenantController.kt                  # /api/platform/tenants/** (platform admin)
-│   │   │   │   ├── ServiceController.kt                 # /api/services/**
-│   │   │   │   ├── ProductController.kt                 # /api/products/**
-│   │   │   │   ├── BlogController.kt                    # /api/blog/**
-│   │   │   │   ├── GalleryController.kt                 # /api/gallery/**
-│   │   │   │   ├── AppointmentController.kt             # /api/appointments/**
-│   │   │   │   ├── AvailabilityController.kt            # /api/availability/**
-│   │   │   │   ├── ReviewController.kt                  # /api/reviews/**
-│   │   │   │   ├── PaymentController.kt                 # /api/payments/** + iyzico webhook
-│   │   │   │   ├── ContactController.kt                 # /api/contact/**
-│   │   │   │   ├── SettingsController.kt                # /api/settings/**
-│   │   │   │   ├── FileUploadController.kt              # /api/upload/**
+│   │   │   │   ├── ServiceController.kt                 # /api/admin/services/**
+│   │   │   │   ├── ProductController.kt                 # /api/admin/products/**
+│   │   │   │   ├── BlogController.kt                    # /api/admin/blog/**
+│   │   │   │   ├── GalleryController.kt                 # /api/admin/gallery/**
+│   │   │   │   ├── AppointmentController.kt             # /api/admin/appointments/**
+│   │   │   │   ├── AvailabilityController.kt            # /api/public/availability + /api/admin/availability
+│   │   │   │   ├── ReviewController.kt                  # /api/admin/reviews/**
+│   │   │   │   ├── PaymentController.kt                 # /api/admin/payments/** + /api/webhooks/iyzico
+│   │   │   │   ├── ContactController.kt                 # /api/admin/messages/**
+│   │   │   │   ├── SettingsController.kt                # /api/admin/settings/**
+│   │   │   │   ├── FileUploadController.kt              # /api/admin/upload/**
 │   │   │   │   └── PublicController.kt                  # /api/public/** (auth gerektirmeyen)
 │   │   │   │
 │   │   │   ├── dto/                                     # Request/Response DTO'lar
@@ -647,13 +639,16 @@ aesthetic-saas-backend/
 │   │   │   │   └── StaleDataCleanupJob.kt               # Eski veri temizliği
 │   │   │   │
 │   │   │   └── exception/                               # Hata yönetimi
-│   │   │       ├── GlobalExceptionHandler.kt            # @RestControllerAdvice
-│   │   │       ├── TenantNotFoundException.kt
-│   │   │       ├── ResourceNotFoundException.kt
-│   │   │       ├── DuplicateResourceException.kt
-│   │   │       ├── AppointmentConflictException.kt
-│   │   │       ├── PaymentException.kt
-│   │   │       └── UnauthorizedException.kt
+│   │   │       ├── GlobalExceptionHandler.kt            # @RestControllerAdvice (§7.7)
+│   │   │       ├── TenantNotFoundException.kt           # 404 — Tenant bulunamadı
+│   │   │       ├── ResourceNotFoundException.kt         # 404 — Kaynak bulunamadı
+│   │   │       ├── DuplicateResourceException.kt        # 409 — Aynı kayıt var
+│   │   │       ├── AppointmentConflictException.kt      # 409 — Zaman çakışması
+│   │   │       ├── AccountLockedException.kt            # 423 — Hesap kilitli
+│   │   │       ├── PlanLimitExceededException.kt        # 429 — Plan limiti aşıldı
+│   │   │       ├── NotificationDeliveryException.kt     # Bildirim gönderim hatası (@Retryable)
+│   │   │       ├── PaymentException.kt                  # Ödeme hatası (iyzico)
+│   │   │       └── UnauthorizedException.kt             # 401 — Yetkisiz
 │   │   │
 │   │   └── resources/
 │   │       ├── application.yml                          # Ana konfigürasyon
@@ -948,7 +943,7 @@ class ServiceCategory : TenantAwareEntity() {
     name = "appointments",
     indexes = [
         Index(name = "idx_appt_tenant_date", columnList = "tenant_id, date"),
-        Index(name = "idx_appt_staff_date", columnList = "tenant_id, staff_id, date, start_time, end_time"),
+        Index(name = "idx_appt_conflict", columnList = "tenant_id, staff_id, date, start_time, end_time, status"),
         Index(name = "idx_appt_status", columnList = "tenant_id, status"),
         Index(name = "idx_appt_client", columnList = "tenant_id, client_id")
     ]
@@ -1497,7 +1492,9 @@ class AppointmentService(
             tenantId, saved.id, services.map { it.title })
 
         // ── ⑧ Bildirim gönder (async — TenantAwareTaskDecorator ile) ──
-        notificationService.sendAppointmentConfirmation(saved)
+        // DÜZELTME: Entity yerine DTO (lazy loading güvenli)
+        val ctx = notificationService.toContext(saved)
+        notificationService.sendAppointmentConfirmation(ctx)
 
         return saved
     }
@@ -1515,10 +1512,12 @@ class AppointmentService(
         // Müşteri iptali ise iptal politikası kontrolü
         if (cancelledByClient) {
             val settings = settingsRepository.findByTenantId(TenantContext.getTenantId())
+            // DÜZELTME: Tenant timezone ile karşılaştır (server timezone ≠ tenant timezone)
+            val tenantZone = ZoneId.of(settings?.timezone ?: "Europe/Istanbul")
             val cancellationDeadline = appointment.date.atTime(appointment.startTime)
                 .minusHours(settings?.cancellationPolicyHours?.toLong() ?: 24)
 
-            if (LocalDateTime.now().isAfter(cancellationDeadline)) {
+            if (LocalDateTime.now(tenantZone).isAfter(cancellationDeadline)) {
                 throw IllegalStateException(
                     "Randevu başlangıcına ${settings?.cancellationPolicyHours ?: 24} " +
                     "saatten az kaldığında iptal yapılamaz"
@@ -1532,8 +1531,9 @@ class AppointmentService(
 
         val saved = appointmentRepository.save(appointment)
 
-        // İptal bildirimi gönder
-        notificationService.sendAppointmentCancellation(saved)
+        // İptal bildirimi gönder — DÜZELTME: Entity yerine DTO (lazy loading güvenli)
+        val ctx = notificationService.toContext(saved)
+        notificationService.sendAppointmentCancellation(ctx)
 
         return saved
     }
@@ -1565,6 +1565,11 @@ class AppointmentService(
      * - recurrenceRule doğrulaması döngü ÖNCESİNDE yapılır (kısmi oluşturma önlenir)
      * - Tüm exception'lar yakalanır (sadece conflict değil, çalışma saati vs. de)
      * - recurringGroupId ve recurrenceRule, appointment oluşturulmadan ÖNCE set edilir (ekstra save yok)
+     *
+     * NOT: createAppointment() aynı sınıftan çağrılır (self-invocation).
+     * Spring AOP proxy bypass edilir → createAppointment'ın kendi @Transactional'ı çalışmaz.
+     * Bu fonksiyonun @Transactional'ı tüm işlemi kapsar. Eğer bağımsız commit gerekirse
+     * TransactionTemplate veya ayrı bir bean kullanılmalıdır.
      */
     @Transactional(isolation = Isolation.READ_COMMITTED)
     fun createRecurringAppointments(
@@ -1698,6 +1703,35 @@ interface AppointmentRepository : JpaRepository<Appointment, String> {
         staffId: String,
         date: LocalDate
     ): List<Appointment>
+
+    // ── Ek metodlar (plan limiti, hatırlatıcı, review) ──
+
+    fun countByTenantIdAndCreatedAtAfter(tenantId: String, after: Instant): Long
+
+    @Query("""
+        SELECT a FROM Appointment a
+        WHERE a.date = :date AND a.startTime <= :time
+        AND a.status = :status
+        AND (:r24 IS NULL OR a.reminder24hSent = :r24)
+        AND (:r1 IS NULL OR a.reminder1hSent = :r1)
+    """)
+    fun findUpcomingNotReminded(
+        @Param("date") date: LocalDate,
+        @Param("time") time: LocalTime,
+        @Param("status") status: AppointmentStatus = AppointmentStatus.CONFIRMED,
+        @Param("r24") reminder24hSent: Boolean? = null,
+        @Param("r1") reminder1hSent: Boolean? = null
+    ): List<Appointment>
+
+    @Query("""
+        SELECT a FROM Appointment a
+        WHERE a.status = :status AND a.updatedAt >= :since
+        AND NOT EXISTS (SELECT r FROM Review r WHERE r.appointment.id = a.id)
+    """)
+    fun findCompletedWithoutReview(
+        @Param("since") since: Instant,
+        @Param("status") status: AppointmentStatus = AppointmentStatus.COMPLETED
+    ): List<Appointment>
 }
 ```
 
@@ -1718,37 +1752,12 @@ interface UserRepository : JpaRepository<User, String> {
     fun countByTenantIdAndRole(tenantId: String, role: Role): Long
 }
 
-@Repository
-interface AppointmentRepository : JpaRepository<Appointment, String> {
-    // ... (Bölüm 5.3'teki pessimistic lock query'leri ek olarak)
-    fun countByTenantIdAndCreatedAtAfter(tenantId: String, after: LocalDateTime): Long
-
-    @Query("""
-        SELECT a FROM Appointment a
-        WHERE a.date = :date AND a.startTime <= :time
-        AND a.status = 'CONFIRMED'
-        AND (:reminder24hSent IS NULL OR a.reminder24hSent = :reminder24hSent)
-        AND (:reminder1hSent IS NULL OR a.reminder1hSent = :reminder1hSent)
-    """)
-    fun findUpcomingNotReminded(
-        @Param("date") date: LocalDate,
-        @Param("time") time: LocalTime,
-        @Param("reminder24hSent") reminder24hSent: Boolean? = null,
-        @Param("reminder1hSent") reminder1hSent: Boolean? = null
-    ): List<Appointment>
-
-    @Query("""
-        SELECT a FROM Appointment a
-        WHERE a.status = 'COMPLETED'
-        AND a.updatedAt >= :since
-        AND NOT EXISTS (SELECT r FROM Review r WHERE r.appointment.id = a.id)
-    """)
-    fun findCompletedWithoutReview(@Param("since") since: LocalDateTime): List<Appointment>
-}
+// DÜZELTME: AppointmentRepository ek metodları 5.3'e taşındı (duplicate kaldırıldı)
 
 @Repository
 interface ContactMessageRepository : JpaRepository<ContactMessage, String> {
-    fun deleteByIsReadTrueAndCreatedAtBefore(cutoff: LocalDateTime)
+    fun deleteByIsReadTrueAndCreatedAtBefore(cutoff: Instant)  // DÜZELTME: LocalDateTime → Instant (entity field tipi)
+    fun deleteByEmail(email: String)                           // DÜZELTME: GdprService tarafından kullanılır
 }
 
 @Repository
@@ -1769,14 +1778,14 @@ interface TenantRepository : JpaRepository<Tenant, String> {
 @Repository
 interface WorkingHoursRepository : JpaRepository<WorkingHours, String> {
     fun findByTenantIdAndStaffIdAndDayOfWeek(
-        tenantId: String, staffId: String, dayOfWeek: DayOfWeek
+        tenantId: String, staffId: String?, dayOfWeek: DayOfWeek  // DÜZELTME: staffId nullable (business-level saatler)
     ): WorkingHours?
 }
 
 @Repository
 interface BlockedTimeSlotRepository : JpaRepository<BlockedTimeSlot, String> {
     fun findByTenantIdAndStaffIdAndDate(
-        tenantId: String, staffId: String, date: LocalDate
+        tenantId: String, staffId: String?, date: LocalDate   // DÜZELTME: staffId nullable
     ): List<BlockedTimeSlot>
 }
 
@@ -1806,7 +1815,8 @@ interface NotificationLogRepository : JpaRepository<NotificationLog, String>
 class AvailabilityService(
     private val workingHoursRepository: WorkingHoursRepository,
     private val appointmentRepository: AppointmentRepository,
-    private val blockedTimeSlotRepository: BlockedTimeSlotRepository
+    private val blockedTimeSlotRepository: BlockedTimeSlotRepository,
+    private val userRepository: UserRepository               // DÜZELTME: findAvailableStaff() için gerekli
 ) {
     /**
      * Belirli bir gün için müsait zaman dilimlerini hesapla
@@ -1851,7 +1861,10 @@ class AvailabilityService(
                 tenantId, staffId, date
             ).filter { it.status !in listOf(AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW) }
         } else {
-            emptyList()  // staffId null ise tüm staff için ayrı ayrı kontrol edilmeli
+            // DÜZELTME: staffId null → tüm randevuları getir, slot hesaplamasında "en az 1 staff müsait" kontrolü yapılır
+            appointmentRepository.findByTenantIdAndDateBetweenAndStatusNot(
+                tenantId, date, date, AppointmentStatus.CANCELLED
+            )
         }
 
         // 4. Bloklanmış zamanları al
@@ -2300,9 +2313,9 @@ Refresh Token (7 gün ömür, DB'de saklanır):
 @Table(
     name = "refresh_tokens",
     indexes = [
-        Index(name = "idx_rt_user", columnList = "userId"),              // Kullanıcının tüm token'ları
+        Index(name = "idx_rt_user", columnList = "user_id"),             // Kullanıcının tüm token'ları
         Index(name = "idx_rt_family", columnList = "family"),            // Theft detection
-        Index(name = "idx_rt_expires", columnList = "expiresAt")         // Expired token temizliği
+        Index(name = "idx_rt_expires", columnList = "expires_at")        // Expired token temizliği
     ]
 )
 class RefreshToken(
@@ -2350,8 +2363,9 @@ class AuthService(
         // KRİTİK: lockedUntil Instant (UTC) — timezone dönüşümü gereksiz
         val now = Instant.now()
 
-        if (user.lockedUntil != null && user.lockedUntil!!.isAfter(now)) {
-            val remainingMinutes = Duration.between(now, user.lockedUntil).toMinutes()
+        val lockedUntil = user.lockedUntil                    // DÜZELTME: Smart cast için local val
+        if (lockedUntil != null && lockedUntil.isAfter(now)) {
+            val remainingMinutes = Duration.between(now, lockedUntil).toMinutes()
             throw AccountLockedException(
                 "Hesabınız çok fazla başarısız giriş denemesi nedeniyle kilitlendi. " +
                 "$remainingMinutes dakika sonra tekrar deneyin."
@@ -2398,7 +2412,7 @@ class SecurityConfig(
             // CSRF devre dışı: REST API, JWT token-based auth kullanır.
             // CSRF koruması session-based auth için gereklidir, stateless API'da gereksizdir.
             .csrf { it.disable() }
-            .cors { it.configurationSource(corsConfigSource()) }
+            .cors { }  // DÜZELTME: corsConfigSource @Bean olduğu için Spring IoC otomatik inject eder — doğrudan çağrı yapılmamalı
             .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
             .addFilterBefore(tenantFilter, UsernamePasswordAuthenticationFilter::class.java)
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter::class.java)
@@ -2418,9 +2432,9 @@ class SecurityConfig(
                     .requestMatchers("/actuator/prometheus").permitAll()                // DÜZELTME: Prometheus scraper erişimi
                     .requestMatchers("/api/webhooks/**").permitAll()  // Dış servis callback (iyzico vb.)
                     // Platform admin
-                    .requestMatchers("/api/platform/**").hasRole("PLATFORM_ADMIN")
+                    .requestMatchers("/api/platform/**").hasAuthority("PLATFORM_ADMIN")    // DÜZELTME: hasRole() ROLE_ prefix ekler — authority ile eşleşmez
                     // Admin endpoints
-                    .requestMatchers("/api/admin/**").hasAnyRole("TENANT_ADMIN", "STAFF")
+                    .requestMatchers("/api/admin/**").hasAnyAuthority("TENANT_ADMIN", "STAFF")  // DÜZELTME: hasAnyRole() ROLE_ prefix ekler
                     // Authenticated
                     .anyRequest().authenticated()
             }
@@ -2660,19 +2674,19 @@ class LocalStorageProvider(
 class ServiceController(private val serviceService: ServiceManagementService) {
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('TENANT_ADMIN', 'STAFF')")
+    @PreAuthorize("hasAnyAuthority('TENANT_ADMIN', 'STAFF')")  // DÜZELTME: hasAnyRole → hasAnyAuthority
     fun listServices(pageable: Pageable): PagedResponse<ServiceResponse> {
         // STAFF ve TENANT_ADMIN görebilir
     }
 
     @PostMapping
-    @PreAuthorize("hasRole('TENANT_ADMIN')")
+    @PreAuthorize("hasAuthority('TENANT_ADMIN')")  // DÜZELTME: hasRole → hasAuthority
     fun createService(@Valid @RequestBody request: CreateServiceRequest): ApiResponse<ServiceResponse> {
         // Sadece TENANT_ADMIN oluşturabilir
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('TENANT_ADMIN')")
+    @PreAuthorize("hasAuthority('TENANT_ADMIN')")  // DÜZELTME: hasRole → hasAuthority
     fun deleteService(@PathVariable id: String): ApiResponse<Nothing> {
         // Sadece TENANT_ADMIN silebilir
     }
@@ -2687,80 +2701,99 @@ class GlobalExceptionHandler {
 
     private val logger = LoggerFactory.getLogger(GlobalExceptionHandler::class.java)
 
-    /** 400 — Validation hataları (Zod/Jakarta) */
+    /** 400 — Validation hataları (Jakarta Bean Validation) */
     @ExceptionHandler(MethodArgumentNotValidException::class)
-    fun handleValidation(ex: MethodArgumentNotValidException): ResponseEntity<ApiResponse<Nothing>> {
+    fun handleValidation(ex: MethodArgumentNotValidException): ResponseEntity<ErrorResponse> {
         val errors = ex.bindingResult.fieldErrors.associate { it.field to (it.defaultMessage ?: "Geçersiz değer") }
         return ResponseEntity.badRequest().body(
-            ApiResponse(success = false, error = "Doğrulama hatası", details = errors)
+            ErrorResponse(error = "Doğrulama hatası", code = ErrorCode.VALIDATION_ERROR, details = errors)
         )
     }
 
     /** 400 — İş kuralı ihlali */
     @ExceptionHandler(IllegalArgumentException::class)
-    fun handleBadRequest(ex: IllegalArgumentException): ResponseEntity<ApiResponse<Nothing>> {
+    fun handleBadRequest(ex: IllegalArgumentException): ResponseEntity<ErrorResponse> {
         return ResponseEntity.badRequest().body(
-            ApiResponse(success = false, error = ex.message ?: "Geçersiz istek")
+            ErrorResponse(error = ex.message ?: "Geçersiz istek", code = ErrorCode.VALIDATION_ERROR)
         )
     }
 
     /** 401 — Yetkisiz erişim */
     @ExceptionHandler(AuthenticationException::class)
-    fun handleAuth(ex: AuthenticationException): ResponseEntity<ApiResponse<Nothing>> {
+    fun handleAuth(ex: AuthenticationException): ResponseEntity<ErrorResponse> {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
-            ApiResponse(success = false, error = "Kimlik doğrulama başarısız")
+            ErrorResponse(error = "Kimlik doğrulama başarısız", code = ErrorCode.INVALID_CREDENTIALS)
         )
     }
 
     /** 403 — Yetersiz yetki */
     @ExceptionHandler(AccessDeniedException::class)
-    fun handleForbidden(ex: AccessDeniedException): ResponseEntity<ApiResponse<Nothing>> {
+    fun handleForbidden(ex: AccessDeniedException): ResponseEntity<ErrorResponse> {
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(
-            ApiResponse(success = false, error = "Bu işlem için yetkiniz yok")
+            ErrorResponse(error = "Bu işlem için yetkiniz yok", code = ErrorCode.CROSS_TENANT_ACCESS)
         )
     }
 
-    /** 404 — Kaynak bulunamadı */
-    @ExceptionHandler(EntityNotFoundException::class)
-    fun handleNotFound(ex: EntityNotFoundException): ResponseEntity<ApiResponse<Nothing>> {
+    /** 404 — Kaynak bulunamadı (custom exception) */
+    @ExceptionHandler(ResourceNotFoundException::class)
+    fun handleResourceNotFound(ex: ResourceNotFoundException): ResponseEntity<ErrorResponse> {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
-            ApiResponse(success = false, error = ex.message ?: "Kayıt bulunamadı")
+            ErrorResponse(error = ex.message ?: "Kayıt bulunamadı", code = ErrorCode.RESOURCE_NOT_FOUND)
         )
     }
 
-    /** 409 — Çakışma (aynı slota iki randevu, tekrarlanan slug vb.) */
-    @ExceptionHandler(DataIntegrityViolationException::class)
-    fun handleConflict(ex: DataIntegrityViolationException): ResponseEntity<ApiResponse<Nothing>> {
+    /** 404 — Tenant bulunamadı */
+    @ExceptionHandler(TenantNotFoundException::class)
+    fun handleTenantNotFound(ex: TenantNotFoundException): ResponseEntity<ErrorResponse> {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+            ErrorResponse(error = ex.message ?: "Tenant bulunamadı", code = ErrorCode.TENANT_NOT_FOUND)
+        )
+    }
+
+    /** 409 — Randevu çakışması */
+    @ExceptionHandler(AppointmentConflictException::class)
+    fun handleAppointmentConflict(ex: AppointmentConflictException): ResponseEntity<ErrorResponse> {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(
-            ApiResponse(success = false, error = "Veri çakışması — bu kayıt zaten mevcut olabilir")
+            ErrorResponse(error = ex.message ?: "Seçilen zaman diliminde çakışma var", code = ErrorCode.APPOINTMENT_CONFLICT)
+        )
+    }
+
+    /** 409 — Veri çakışması (DB unique constraint vb.) */
+    @ExceptionHandler(DataIntegrityViolationException::class)
+    fun handleConflict(ex: DataIntegrityViolationException): ResponseEntity<ErrorResponse> {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(
+            ErrorResponse(error = "Veri çakışması — bu kayıt zaten mevcut olabilir", code = ErrorCode.DUPLICATE_RESOURCE)
+        )
+    }
+
+    /** 423 — Hesap kilitli */
+    @ExceptionHandler(AccountLockedException::class)
+    fun handleAccountLocked(ex: AccountLockedException): ResponseEntity<ErrorResponse> {
+        return ResponseEntity.status(HttpStatus.LOCKED).body(
+            ErrorResponse(error = ex.message ?: "Hesap kilitli", code = ErrorCode.ACCOUNT_LOCKED)
         )
     }
 
     /** 429 — Plan limiti aşıldı */
     @ExceptionHandler(PlanLimitExceededException::class)
-    fun handlePlanLimit(ex: PlanLimitExceededException): ResponseEntity<ApiResponse<Nothing>> {
+    fun handlePlanLimit(ex: PlanLimitExceededException): ResponseEntity<ErrorResponse> {
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(
-            ApiResponse(success = false, error = ex.message ?: "Plan limiti aşıldı")
+            ErrorResponse(error = ex.message ?: "Plan limiti aşıldı", code = ErrorCode.RATE_LIMIT_EXCEEDED)
         )
     }
 
     /** 500 — Beklenmeyen hatalar */
     @ExceptionHandler(Exception::class)
-    fun handleGeneral(ex: Exception): ResponseEntity<ApiResponse<Nothing>> {
+    fun handleGeneral(ex: Exception): ResponseEntity<ErrorResponse> {
         logger.error("Beklenmeyen hata", ex)
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
-            ApiResponse(success = false, error = "Sunucu hatası — lütfen tekrar deneyin")
+            ErrorResponse(error = "Sunucu hatası — lütfen tekrar deneyin", code = ErrorCode.INTERNAL_ERROR)
         )
     }
 }
 
-/** Standart API yanıt sarmalayıcı */
-data class ApiResponse<T>(
-    val success: Boolean,
-    val data: T? = null,
-    val error: String? = null,
-    val details: Any? = null
-)
+// DÜZELTME: Hata handler'ları artık ErrorResponse (§6.5) dönüyor — ApiResponse sadece başarılı yanıtlar için.
+// ErrorResponse alanları: error (mesaj), code (ErrorCode enum), details (Map<String,String>?), timestamp
 ```
 
 ---
@@ -4299,7 +4332,8 @@ class PlanLimitService(
         val monthStart = ZonedDateTime.now(tenantZone)
             .withDayOfMonth(1)
             .toLocalDate()
-            .atStartOfDay()                                      // 00:00:00 (saat sıfırla)
+            .atStartOfDay(tenantZone)                            // ZonedDateTime olarak 00:00:00
+            .toInstant()                                          // DÜZELTME: Instant'a çevir (createdAt: Instant)
 
         val monthlyCount = appointmentRepository.countByTenantIdAndCreatedAtAfter(
             tenantId, monthStart
@@ -4460,10 +4494,31 @@ enum class NotificationType {
 enum class NotificationChannel { EMAIL, SMS }
 enum class DeliveryStatus { PENDING, SENT, FAILED, BOUNCED }
 
-/** DÜZELTME: Eksik exception tanımları — @Retryable ve @Recover için gerekli */
+/**
+ * Tüm özel exception sınıfları — proje yapısında exception/ paketi altında bulunur.
+ * GlobalExceptionHandler (§7.7) her birini ayrı HTTP durum koduyla eşleştirir.
+ */
+
+// Auth & Security
+class UnauthorizedException(message: String) : RuntimeException(message)                        // 401
+class AccountLockedException(message: String) : RuntimeException(message)                       // 423
+
+// Resource
+class ResourceNotFoundException(message: String) : RuntimeException(message)                    // 404
+class TenantNotFoundException(message: String) : RuntimeException(message)                      // 404
+class DuplicateResourceException(message: String) : RuntimeException(message)                   // 409
+
+// Appointment
+class AppointmentConflictException(message: String) : RuntimeException(message)                 // 409
+
+// Payment
+class PaymentException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)  // 500/502
+
+// Notification
 class NotificationDeliveryException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
-class AccountLockedException(message: String) : RuntimeException(message)
-class PlanLimitExceededException(message: String) : RuntimeException(message)
+
+// Plan
+class PlanLimitExceededException(message: String) : RuntimeException(message)                   // 429
 ```
 
 ### 18.2.1 NotificationService — Bildirim Gönderim Servisi
