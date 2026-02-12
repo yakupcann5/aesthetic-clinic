@@ -4067,7 +4067,7 @@ class AppointmentConcurrencyTest {
     @BeforeEach
     fun setup() {
         // Multi-tenant test: TenantContext ayarla
-        TenantContext.setCurrentTenant(testTenantId)
+        TenantContext.setTenantId(testTenantId)
         // Test verisi oluştur (staff, service, working_hours vb.)
     }
 
@@ -4087,7 +4087,7 @@ class AppointmentConcurrencyTest {
 
         // Not: Her thread kendi TenantContext'ini set etmeli
         val thread1 = Thread {
-            TenantContext.setCurrentTenant(testTenantId)
+            TenantContext.setTenantId(testTenantId)
             latch.await()
             try {
                 appointmentService.createAppointment(request1)
@@ -4100,7 +4100,7 @@ class AppointmentConcurrencyTest {
         }
 
         val thread2 = Thread {
-            TenantContext.setCurrentTenant(testTenantId)
+            TenantContext.setTenantId(testTenantId)
             latch.await()
             try {
                 appointmentService.createAppointment(request2) // aynı slot
@@ -4303,7 +4303,7 @@ class PlanLimitService(
 @RestController
 @RequestMapping("/api/webhooks")
 class WebhookController(
-    private val billingService: BillingService,
+    private val paymentService: PaymentService,   // DÜZELTME: BillingService → PaymentService (tanımlı sınıf)
     @Value("\${iyzico.secret-key}") private val iyzicoSecretKey: String
 ) {
     private val logger = LoggerFactory.getLogger(WebhookController::class.java)
@@ -4321,7 +4321,7 @@ class WebhookController(
 
         // 2. İş mantığını işle
         try {
-            billingService.processWebhookPayload(payload)
+            paymentService.processWebhookPayload(payload)
         } catch (e: Exception) {
             logger.error("iyzico webhook işleme hatası", e)
             // Webhook'a 200 dön (tekrar denemesini engelle), hatayı logla
@@ -4424,11 +4424,33 @@ enum class NotificationType {
 }
 enum class NotificationChannel { EMAIL, SMS }
 enum class DeliveryStatus { PENDING, SENT, FAILED, BOUNCED }
+
+/** DÜZELTME: Eksik exception tanımları — @Retryable ve @Recover için gerekli */
+class NotificationDeliveryException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+class AccountLockedException(message: String) : RuntimeException(message)
+class PlanLimitExceededException(message: String) : RuntimeException(message)
 ```
 
 ### 18.2.1 NotificationService — Bildirim Gönderim Servisi
 
 ```kotlin
+/**
+ * DÜZELTME: @Async metotları doğrudan JPA entity almamalı (LazyInitializationException riski).
+ * Bunun yerine DTO kullanılır. Caller tarafında Hibernate.initialize() veya @EntityGraph ile
+ * lazy alanlar yüklenir, ardından DTO'ya dönüştürülür.
+ */
+data class NotificationContext(
+    val appointmentId: String,
+    val tenantId: String,
+    val clientName: String,
+    val clientEmail: String,
+    val clientPhone: String,
+    val serviceName: String,
+    val staffName: String,
+    val date: String,
+    val startTime: String
+)
+
 @Service
 class NotificationService(
     private val notificationTemplateRepository: NotificationTemplateRepository,
@@ -4438,107 +4460,144 @@ class NotificationService(
 ) {
     private val logger = LoggerFactory.getLogger(NotificationService::class.java)
 
+    /** Appointment entity'den DTO oluştur — CALLER (transactional context) tarafından çağrılmalı */
+    fun toContext(appointment: Appointment): NotificationContext {
+        return NotificationContext(
+            appointmentId = appointment.id!!,
+            tenantId = TenantContext.getTenantId(),
+            clientName = appointment.clientName,
+            clientEmail = appointment.clientEmail,
+            clientPhone = appointment.clientPhone,
+            serviceName = appointment.primaryService?.title ?: "",   // Lazy alan burada yüklenir
+            staffName = appointment.staff?.name ?: "",               // Lazy alan burada yüklenir
+            date = appointment.date.toString(),
+            startTime = appointment.startTime.toString()
+        )
+    }
+
     /**
-     * Randevu onay bildirimi gönder (randevu oluşturulduktan sonra çağrılır)
+     * Randevu onay bildirimi gönder
+     * DÜZELTME: Appointment yerine NotificationContext (DTO) alır — @Async thread'de lazy loading güvenli
      */
     @Async("taskExecutor")
-    @Retryable(maxAttempts = 3, backoff = Backoff(delay = 2000))
-    fun sendAppointmentConfirmation(appointment: Appointment) {
-        val tenantId = TenantContext.getTenantId()
+    @Retryable(value = [NotificationDeliveryException::class], maxAttempts = 3, backoff = Backoff(delay = 2000))
+    fun sendAppointmentConfirmation(ctx: NotificationContext) {
         val template = notificationTemplateRepository
-            .findByTenantIdAndType(tenantId, NotificationType.APPOINTMENT_CONFIRMATION)
-            ?: return  // Template yoksa bildirim gönderilmez
+            .findByTenantIdAndType(ctx.tenantId, NotificationType.APPOINTMENT_CONFIRMATION)
+            ?: return
 
         val variables = mapOf(
-            "clientName" to appointment.clientName,
-            "serviceName" to (appointment.primaryService?.title ?: ""),
-            "date" to appointment.date.toString(),
-            "startTime" to appointment.startTime.toString(),
-            "staffName" to (appointment.staff?.name ?: "")
+            "clientName" to ctx.clientName,
+            "serviceName" to ctx.serviceName,
+            "date" to ctx.date,
+            "startTime" to ctx.startTime,
+            "staffName" to ctx.staffName
         )
 
-        sendNotification(tenantId, template, appointment, variables)
+        sendNotification(ctx, template, variables)
+    }
+
+    /**
+     * DÜZELTME: Eksik sendAppointmentCancellation metodu eklendi (cancelAppointment'tan çağrılıyor)
+     */
+    @Async("taskExecutor")
+    @Retryable(value = [NotificationDeliveryException::class], maxAttempts = 3, backoff = Backoff(delay = 2000))
+    fun sendAppointmentCancellation(ctx: NotificationContext) {
+        val template = notificationTemplateRepository
+            .findByTenantIdAndType(ctx.tenantId, NotificationType.APPOINTMENT_CANCELLED)
+            ?: return
+
+        val variables = mapOf(
+            "clientName" to ctx.clientName,
+            "serviceName" to ctx.serviceName,
+            "date" to ctx.date,
+            "startTime" to ctx.startTime
+        )
+
+        sendNotification(ctx, template, variables)
     }
 
     /**
      * Hatırlatma bildirimi gönder (scheduled job tarafından çağrılır)
      */
-    @Retryable(maxAttempts = 3, backoff = Backoff(delay = 2000))
-    fun sendReminder(appointment: Appointment, type: NotificationType) {
-        val tenantId = TenantContext.getTenantId()
+    @Retryable(value = [NotificationDeliveryException::class], maxAttempts = 3, backoff = Backoff(delay = 2000))
+    fun sendReminder(ctx: NotificationContext, type: NotificationType) {
         val template = notificationTemplateRepository
-            .findByTenantIdAndType(tenantId, type) ?: return
+            .findByTenantIdAndType(ctx.tenantId, type) ?: return
 
         val variables = mapOf(
-            "clientName" to appointment.clientName,
-            "serviceName" to (appointment.primaryService?.title ?: ""),
-            "date" to appointment.date.toString(),
-            "startTime" to appointment.startTime.toString()
+            "clientName" to ctx.clientName,
+            "serviceName" to ctx.serviceName,
+            "date" to ctx.date,
+            "startTime" to ctx.startTime
         )
 
-        sendNotification(tenantId, template, appointment, variables)
+        sendNotification(ctx, template, variables)
     }
 
     /**
      * Randevu sonrası değerlendirme isteği gönder
      */
     @Async("taskExecutor")
-    fun sendReviewRequest(appointment: Appointment) {
-        val tenantId = TenantContext.getTenantId()
+    @Retryable(value = [NotificationDeliveryException::class], maxAttempts = 3, backoff = Backoff(delay = 2000))
+    fun sendReviewRequest(ctx: NotificationContext) {
         val template = notificationTemplateRepository
-            .findByTenantIdAndType(tenantId, NotificationType.REVIEW_REQUEST) ?: return
+            .findByTenantIdAndType(ctx.tenantId, NotificationType.REVIEW_REQUEST) ?: return
 
         val variables = mapOf(
-            "clientName" to appointment.clientName,
-            "serviceName" to (appointment.primaryService?.title ?: "")
+            "clientName" to ctx.clientName,
+            "serviceName" to ctx.serviceName
         )
 
-        sendNotification(tenantId, template, appointment, variables)
+        sendNotification(ctx, template, variables)
     }
 
+    /**
+     * DÜZELTME: Exception'lar artık re-throw ediliyor → @Retryable tetiklenebilir.
+     * Başarısız gönderimler loglanır, ardından NotificationDeliveryException fırlatılır.
+     */
     private fun sendNotification(
-        tenantId: String,
+        ctx: NotificationContext,
         template: NotificationTemplate,
-        appointment: Appointment,
         variables: Map<String, String>
     ) {
         // E-posta gönderimi
-        if (template.isEmailEnabled && appointment.clientEmail.isNotBlank()) {
+        if (template.isEmailEnabled && ctx.clientEmail.isNotBlank()) {
             try {
                 val subject = replaceVariables(template.emailSubject ?: "", variables)
                 val body = replaceVariables(template.emailBody ?: "", variables)
-                emailService.send(appointment.clientEmail, subject, body)
-
-                logNotification(tenantId, appointment, NotificationChannel.EMAIL, template.type, DeliveryStatus.SENT)
+                emailService.send(ctx.clientEmail, subject, body)
+                logNotification(ctx, NotificationChannel.EMAIL, template.type, DeliveryStatus.SENT)
             } catch (e: Exception) {
-                logger.error("E-posta gönderilemedi — appointment={}, email={}", appointment.id, appointment.clientEmail, e)
-                logNotification(tenantId, appointment, NotificationChannel.EMAIL, template.type, DeliveryStatus.FAILED, e.message)
+                logger.error("E-posta gönderilemedi — appointment={}, email={}", ctx.appointmentId, ctx.clientEmail, e)
+                logNotification(ctx, NotificationChannel.EMAIL, template.type, DeliveryStatus.FAILED, e.message)
+                throw NotificationDeliveryException("E-posta gönderilemedi: ${ctx.clientEmail}", e)
             }
         }
 
         // SMS gönderimi
-        if (template.isSmsEnabled && appointment.clientPhone.isNotBlank()) {
+        if (template.isSmsEnabled && ctx.clientPhone.isNotBlank()) {
             try {
                 val body = replaceVariables(template.smsBody ?: "", variables)
-                smsService.send(appointment.clientPhone, body)
-
-                logNotification(tenantId, appointment, NotificationChannel.SMS, template.type, DeliveryStatus.SENT)
+                smsService.send(ctx.clientPhone, body)
+                logNotification(ctx, NotificationChannel.SMS, template.type, DeliveryStatus.SENT)
             } catch (e: Exception) {
-                logger.error("SMS gönderilemedi — appointment={}, phone={}", appointment.id, appointment.clientPhone, e)
-                logNotification(tenantId, appointment, NotificationChannel.SMS, template.type, DeliveryStatus.FAILED, e.message)
+                logger.error("SMS gönderilemedi — appointment={}, phone={}", ctx.appointmentId, ctx.clientPhone, e)
+                logNotification(ctx, NotificationChannel.SMS, template.type, DeliveryStatus.FAILED, e.message)
+                throw NotificationDeliveryException("SMS gönderilemedi: ${ctx.clientPhone}", e)
             }
         }
     }
 
     private fun logNotification(
-        tenantId: String, appointment: Appointment,
+        ctx: NotificationContext,
         channel: NotificationChannel, type: NotificationType,
         status: DeliveryStatus, errorMessage: String? = null
     ) {
         val log = NotificationLog().apply {
-            this.appointmentId = appointment.id
-            this.recipientEmail = if (channel == NotificationChannel.EMAIL) appointment.clientEmail else null
-            this.recipientPhone = if (channel == NotificationChannel.SMS) appointment.clientPhone else null
+            this.appointmentId = ctx.appointmentId
+            this.recipientEmail = if (channel == NotificationChannel.EMAIL) ctx.clientEmail else null
+            this.recipientPhone = if (channel == NotificationChannel.SMS) ctx.clientPhone else null
             this.channel = channel
             this.type = type
             this.status = status
@@ -4637,18 +4696,27 @@ class AppointmentReminderJob(
 > - SMS (Netgsm): REST API kullanır, ek dependency gerekmez (`RestTemplate`/`WebClient` ile)
 
 ```yaml
-# application.yml
+# application.yml — notification bölümü (Bölüm 9.1 ile tutarlı)
 notification:
-  email:
-    provider: sendgrid
-    api-key: ${SENDGRID_API_KEY:}
-    from-email: ${NOTIFICATION_FROM_EMAIL:no-reply@app.com}
+  provider: sendgrid                                 # DÜZELTME: Flat yapı (@ConditionalOnProperty ile uyumlu)
+  api-key: ${SENDGRID_API_KEY:}
+  from-email: ${NOTIFICATION_FROM_EMAIL:noreply@aestheticclinic.com}  # DÜZELTME: Tutarlı default
+  from-name: ${NOTIFICATION_FROM_NAME:Aesthetic Clinic}
   sms:
     provider: netgsm
-    usercode: ${NETGSM_USERCODE:}
+    username: ${NETGSM_USERNAME:}                    # DÜZELTME: usercode → username (Bölüm 26 ile tutarlı)
     password: ${NETGSM_PASSWORD:}
-    msgheader: ${NETGSM_HEADER:APPMESAJ}
+    sender-id: ${NETGSM_SENDER_ID:APPMESAJ}          # DÜZELTME: msgheader → sender-id (Bölüm 26 ile tutarlı)
 ```
+
+> **NOT:** `RestTemplate` bean tanımı gerekli (Spring Boot otomatik oluşturmaz):
+> ```kotlin
+> @Configuration
+> class WebConfig {
+>     @Bean
+>     fun restTemplate(builder: RestTemplateBuilder): RestTemplate = builder.build()
+> }
+> ```
 
 ### 18.4.1 EmailService + SmsService Interface'leri
 
@@ -4656,6 +4724,7 @@ notification:
 /** E-posta gönderim soyutlaması */
 interface EmailService {
     fun send(to: String, subject: String, htmlBody: String)
+    fun healthCheck()    // DÜZELTME: Health indicator için (Bölüm 25.1)
 }
 
 /** SMS gönderim soyutlaması */
@@ -4669,8 +4738,15 @@ interface SmsService {
 class SendGridEmailService(
     @Value("\${notification.api-key}") private val apiKey: String,
     @Value("\${notification.from-email}") private val fromEmail: String,
-    @Value("\${notification.from-name}") private val fromName: String
+    @Value("\${notification.from-name:Aesthetic Clinic}") private val fromName: String
 ) : EmailService {
+
+    /** Sağlık kontrolü — Health indicator tarafından çağrılır */
+    fun healthCheck() {
+        // SendGrid API'ye basit bir istek atarak erişilebilirliği doğrula
+        val sg = SendGrid(apiKey)
+        sg.api(Request().apply { method = Method.GET; endpoint = "scopes" })
+    }
     // SendGrid API çağrısı
     override fun send(to: String, subject: String, htmlBody: String) {
         val sg = SendGrid(apiKey)
@@ -4693,9 +4769,9 @@ class SendGridEmailService(
 @Service
 @ConditionalOnProperty("notification.sms.provider", havingValue = "netgsm")
 class NetgsmSmsService(
-    @Value("\${notification.sms.username}") private val username: String,
+    @Value("\${notification.sms.username}") private val username: String,   // DÜZELTME: application.yml ile tutarlı
     @Value("\${notification.sms.password}") private val password: String,
-    @Value("\${notification.sms.sender-id}") private val senderId: String,
+    @Value("\${notification.sms.sender-id}") private val senderId: String,  // DÜZELTME: application.yml ile tutarlı
     private val restTemplate: RestTemplate
 ) : SmsService {
     private val logger = LoggerFactory.getLogger(NetgsmSmsService::class.java)
@@ -4735,8 +4811,12 @@ class NetgsmSmsService(
 
 ```kotlin
 // AsyncConfig.kt (Bölüm 2.4'te tanımlandı) + @Scheduled kullanımı
+// DÜZELTME: Multi-instance deployment'ta duplicate job çalışmasını önlemek için ShedLock kullanılmalı:
+// implementation("net.javacrumbs.shedlock:shedlock-spring:5.16.0")
+// implementation("net.javacrumbs.shedlock:shedlock-provider-jdbc-template:5.16.0")
+// @EnableSchedulerLock(defaultLockAtMostFor = "10m")
+// Her @Scheduled metoda: @SchedulerLock(name = "jobName", lockAtLeastFor = "4m")
 
-// Zamanlanmış görevler:
 @Component
 class ScheduledJobs(
     private val tenantAwareScheduler: TenantAwareScheduler,
@@ -4765,7 +4845,7 @@ class ScheduledJobs(
             // DÜZELTME: Tenant timezone ile 30 gün öncesini hesapla
             val settings = siteSettingsRepository.findByTenantId(tenant.id!!)
             val tenantZone = ZoneId.of(settings?.timezone ?: "Europe/Istanbul")
-            val cutoff = ZonedDateTime.now(tenantZone).minusDays(30).toLocalDateTime()
+            val cutoff = ZonedDateTime.now(tenantZone).minusDays(30).toInstant()  // DÜZELTME: Instant (entity field tipi ile tutarlı)
             // Sadece okunmuş mesajları sil
             contactMessageRepository.deleteByIsReadTrueAndCreatedAtBefore(cutoff)
         }
@@ -4778,7 +4858,7 @@ class ScheduledJobs(
             // DÜZELTME: Tenant timezone ile "24 saat önce" hesapla
             val settings = siteSettingsRepository.findByTenantId(tenant.id!!)
             val tenantZone = ZoneId.of(settings?.timezone ?: "Europe/Istanbul")
-            val yesterday = ZonedDateTime.now(tenantZone).minusHours(24).toLocalDateTime()
+            val yesterday = ZonedDateTime.now(tenantZone).minusHours(24).toInstant()  // DÜZELTME: Instant (entity field tipi ile tutarlı)
 
             val completedAppointments = appointmentRepository
                 .findCompletedWithoutReview(yesterday)
@@ -4853,12 +4933,74 @@ fun deleteMyAccount(): ApiResponse<Nothing> {
     return ApiResponse(message = "Hesabınız ve ilişkili verileriniz silindi")
 }
 
-// Silme işlemi:
-// 1. Kişisel bilgileri anonimleştir (appointments, reviews'daki isim/email → "Anonim")
-// 2. ContactMessage'ları sil
-// 3. RefreshToken'ları sil
-// 4. User kaydını sil (veya anonimleştir)
-// NOT: Fatura bilgileri yasal zorunluluk nedeniyle 10 yıl saklanır
+```
+
+### 20.2.1 GdprService — Veri Dışa Aktarma & Silme Servisi
+
+```kotlin
+/** DÜZELTME: GdprService tanımı eklendi — Bölüm 20.1 ve 20.2'de çağrılıyor */
+@Service
+class GdprService(
+    private val userRepository: UserRepository,
+    private val appointmentRepository: AppointmentRepository,
+    private val contactMessageRepository: ContactMessageRepository,
+    private val refreshTokenRepository: RefreshTokenRepository,
+    private val reviewRepository: ReviewRepository,
+    private val objectMapper: ObjectMapper
+) {
+    /**
+     * Kullanıcının tüm verisini JSON byte array olarak dışa aktar
+     * (KVKK/GDPR Veri Taşınabilirlik Hakkı)
+     */
+    fun exportUserData(userId: String): ByteArray {
+        val user = userRepository.findById(userId)
+            .orElseThrow { ResourceNotFoundException("Kullanıcı bulunamadı: $userId") }
+
+        val data = mapOf(
+            "user" to mapOf(
+                "name" to user.name,
+                "email" to user.email,
+                "phone" to user.phone,
+                "role" to user.role.name,
+                "createdAt" to user.createdAt.toString()
+            ),
+            "appointments" to appointmentRepository.findByClientEmail(user.email)
+                .map { mapOf("date" to it.date.toString(), "service" to it.primaryService?.title, "status" to it.status.name) },
+            "reviews" to reviewRepository.findByUserId(userId)
+                .map { mapOf("rating" to it.rating, "comment" to it.comment, "createdAt" to it.createdAt.toString()) },
+            "exportedAt" to Instant.now().toString()
+        )
+
+        return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(data)
+    }
+
+    /**
+     * Kullanıcı hesabını ve ilişkili verileri sil/anonimleştir
+     * (KVKK/GDPR Unutulma Hakkı)
+     */
+    @Transactional
+    fun deleteUserAndRelatedData(userId: String) {
+        val user = userRepository.findById(userId)
+            .orElseThrow { ResourceNotFoundException("Kullanıcı bulunamadı: $userId") }
+
+        // 1. Randevulardaki kişisel bilgileri anonimleştir (yasal zorunluluk: kayıt tutma)
+        appointmentRepository.anonymizeByClientEmail(user.email)   // clientName → "Anonim", clientEmail → "", clientPhone → ""
+
+        // 2. Değerlendirmeleri anonimleştir
+        reviewRepository.anonymizeByUserId(userId)                 // comment → "[Silindi]"
+
+        // 3. İletişim mesajlarını sil
+        contactMessageRepository.deleteByEmail(user.email)
+
+        // 4. Refresh token'ları sil
+        refreshTokenRepository.deleteByUserId(userId)
+
+        // 5. Kullanıcı kaydını sil
+        userRepository.delete(user)
+
+        // NOT: Fatura bilgileri (invoices) yasal zorunluluk nedeniyle 10 yıl saklanır — silinmez
+    }
+}
 ```
 
 ### 20.3 Rıza Yönetimi
