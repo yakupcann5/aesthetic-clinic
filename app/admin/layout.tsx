@@ -24,6 +24,10 @@ export default async function AdminLayout({
     redirect('/giris');
   }
 
+  if (session.user.role !== 'ADMIN') {
+    redirect('/giris');
+  }
+
   return (
     <SessionProvider session={session}>
       <div className="flex h-screen bg-gray-50">

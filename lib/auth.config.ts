@@ -40,7 +40,10 @@ export const authConfig: NextAuthConfig = {
     },
     authorized({ auth, request }) {
       const isAdmin = request.nextUrl.pathname.startsWith('/admin');
-      if (isAdmin && !auth?.user) return false;
+      if (isAdmin) {
+        if (!auth?.user) return false;
+        if (auth.user.role !== 'ADMIN') return false;
+      }
       return true;
     },
   },

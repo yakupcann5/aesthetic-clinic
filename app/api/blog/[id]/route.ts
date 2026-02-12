@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { updateBlogPostSchema } from '@/lib/validations/blog';
 import { successResponse, errorResponse, handleApiError } from '@/lib/api-utils';
@@ -19,6 +20,9 @@ export async function GET(_request: NextRequest, { params }: Params) {
 
 export async function PUT(request: NextRequest, { params }: Params) {
   try {
+    const session = await auth();
+    if (!session?.user) return errorResponse('Yetkilendirme gerekli', 401);
+
     const { id } = await params;
     const body = await request.json();
     const data = updateBlogPostSchema.parse(body);
@@ -38,6 +42,9 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
 export async function DELETE(_request: NextRequest, { params }: Params) {
   try {
+    const session = await auth();
+    if (!session?.user) return errorResponse('Yetkilendirme gerekli', 401);
+
     const { id } = await params;
     await db.blogPost.delete({ where: { id } });
     return successResponse({ deleted: true });
