@@ -2414,6 +2414,8 @@ class SecurityConfig(
                         "/api/auth/reset-password"
                     ).permitAll()
                     .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
+                    .requestMatchers("/actuator/health", "/actuator/info").permitAll()  // DÜZELTME: Docker healthcheck + k8s probes
+                    .requestMatchers("/actuator/prometheus").permitAll()                // DÜZELTME: Prometheus scraper erişimi
                     .requestMatchers("/api/webhooks/**").permitAll()  // Dış servis callback (iyzico vb.)
                     // Platform admin
                     .requestMatchers("/api/platform/**").hasRole("PLATFORM_ADMIN")
@@ -2870,7 +2872,7 @@ CREATE INDEX idx_review_staff ON reviews(tenant_id, staff_id);
 
 -- Payment sorguları
 CREATE INDEX idx_payment_tenant ON payments(tenant_id, status);
-CREATE INDEX idx_subscription_tenant ON subscriptions(tenant_id);
+CREATE INDEX idx_sub_tenant_status ON subscriptions(tenant_id, status);  -- DÜZELTME: V12 migration ile tutarlı (composite index)
 
 -- Çalışma saatleri + bloklanmış slotlar
 CREATE UNIQUE INDEX uk_working_hours ON working_hours(tenant_id, staff_id, day_of_week);
@@ -3232,6 +3234,7 @@ CREATE TABLE refresh_tokens (
     created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
 
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,   -- DÜZELTME: Eksik tenant FK
 
     INDEX idx_rt_user (user_id),
     INDEX idx_rt_family (family),
@@ -3242,14 +3245,14 @@ CREATE TABLE refresh_tokens (
 CREATE TABLE subscriptions (
     id VARCHAR(36) NOT NULL PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL,
-    plan VARCHAR(20) NOT NULL DEFAULT 'TRIAL',            -- TRIAL, BASIC, PRO, ENTERPRISE
+    plan VARCHAR(20) NOT NULL DEFAULT 'TRIAL',            -- TRIAL, BASIC, PROFESSIONAL, ENTERPRISE  -- DÜZELTME: PRO → PROFESSIONAL (entity enum ile tutarlı)
     start_date DATE NOT NULL,
     end_date DATE NOT NULL,
     auto_renew BOOLEAN NOT NULL DEFAULT TRUE,
     max_staff INT NOT NULL DEFAULT 1,
     max_appointments_per_month INT NOT NULL DEFAULT 50,
     max_storage_mb INT NOT NULL DEFAULT 100,
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',         -- ACTIVE, EXPIRED, CANCELLED, SUSPENDED
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',         -- ACTIVE, PAST_DUE, CANCELLED, EXPIRED  -- DÜZELTME: SUSPENDED → PAST_DUE (entity enum ile tutarlı)
     created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
     updated_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
 
@@ -3273,7 +3276,7 @@ CREATE TABLE payments (
 
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
     FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE SET NULL,
-    INDEX idx_pay_tenant (tenant_id),
+    -- DÜZELTME: idx_pay_tenant kaldırıldı — idx_pay_status leftmost prefix ile aynı görevi görür
     INDEX idx_pay_status (tenant_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
 
@@ -3283,8 +3286,13 @@ CREATE TABLE invoices (
     payment_id VARCHAR(36),
     invoice_number VARCHAR(50) NOT NULL,
     amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    currency VARCHAR(3) NOT NULL DEFAULT 'TRY',      -- DÜZELTME: Entity field eklendi
     tax_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    tax_rate INT NOT NULL DEFAULT 20,                -- DÜZELTME: Entity field eklendi (%KDV)
     total_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    billing_name VARCHAR(255) NOT NULL DEFAULT '',    -- DÜZELTME: Entity field eklendi
+    billing_address TEXT,                             -- DÜZELTME: Entity field eklendi
+    tax_id VARCHAR(20),                               -- DÜZELTME: Entity field eklendi (Vergi No)
     pdf_url VARCHAR(500),
     created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
 
@@ -3319,6 +3327,7 @@ CREATE TABLE notification_logs (
     type VARCHAR(50) NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING',        -- PENDING, SENT, FAILED
     error_message TEXT,
+    retry_count INT NOT NULL DEFAULT 0,               -- DÜZELTME: Entity field eklendi (NotificationLog.retryCount)
     sent_at TIMESTAMP(6) NULL,
     created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
 
@@ -3417,6 +3426,7 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+    baseline-version: 0             # DÜZELTME: FlywayConfig.kt custom bean ile tutarlı
 
   data:
     redis:
@@ -3428,8 +3438,10 @@ spring:
   cache:
     type: caffeine                # Local cache (tenant resolution, entity cache)
     caffeine:
-      spec: maximumSize=1000,expireAfterWrite=300s
+      spec: maximumSize=1000,expireAfterWrite=300s    # 5 dakika (tüm cache'ler için ortak)
     cache-names: services,products,blog,gallery,tenants
+    # NOT: Per-cache TTL gerekirse custom CaffeineCacheManager @Bean tanımlanmalı.
+    # TenantCacheManager eviction'ı CacheManager üzerinden yapılmalı (Redis değil — Bölüm 13.3).
 
   servlet:
     multipart:
@@ -3502,8 +3514,26 @@ management:
 app:
   frontend-url: ${FRONTEND_URL:http://localhost:3000}
 
+# DÜZELTME: iyzico konfigürasyonu eklendi (WebhookController @Value ile kullanıyor)
+iyzico:
+  api-key: ${IYZICO_API_KEY:}
+  secret-key: ${IYZICO_SECRET_KEY:}
+  base-url: ${IYZICO_BASE_URL:https://sandbox-api.iyzipay.com}
+
+# DÜZELTME: Dosya yükleme — StorageProvider @Value ile kullanıyor
+storage:
+  provider: ${FILE_PROVIDER:local}     # local | s3
+  local:
+    base-path: ${FILE_UPLOAD_PATH:./uploads}
+    base-url: ${FILE_UPLOAD_URL:http://localhost:8080/uploads}
+
 server:
   port: ${SERVER_PORT:8080}
+
+# DÜZELTME: Logging pattern — MDC tenantSlug/correlationId görüntüleme
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] [%X{correlationId}] [tenant=%X{tenantId}] %-5level %logger{36} - %msg%n"
 ```
 
 ### 9.1.1 application-dev.yml
@@ -3637,6 +3667,8 @@ tasks.withType<Test> {
 
 ```kotlin
 // FlywayConfig.kt — Flyway migration konfigürasyonu
+// NOT: spring.flyway.* YAML ayarları da mevcuttur (Bölüm 9.1). Custom bean bunları override eder.
+// YAML-only kullanımı tercih edilirse bu sınıf kaldırılabilir (spring.flyway.baseline-version: 0 eklendi).
 @Configuration
 class FlywayConfig {
 
@@ -3670,6 +3702,7 @@ services:
     ports:
       - "8080:8080"
     environment:
+      - SPRING_PROFILES_ACTIVE=dev               # DÜZELTME: Dev profili aktif (application-dev.yml yüklenir)
       - DB_HOST=mysql
       - DB_PORT=3306
       - DB_NAME=aesthetic_saas
@@ -3685,7 +3718,7 @@ services:
       mysql:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy               # DÜZELTME: service_started → service_healthy (Redis hazır olana kadar bekle)
     volumes:
       - uploads:/app/uploads
     restart: unless-stopped
@@ -3757,13 +3790,14 @@ ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
 > **Not:** Aşağıdaki `.dockerignore` dosyasını proje kök dizinine ekleyin:
 
 ```text
-# .dockerignore
+# .dockerignore — Multi-stage build için (multi-stage container içinde build yapar)
+# NOT: Simple Dockerfile kullanıyorsanız build/ satırını kaldırın (jar kopyalamak için gerekli)
 .git/
 .gitignore
 .idea/
 .vscode/
 *.md
-build/
+build/                  # Multi-stage'de gerekli değil; simple Dockerfile'da KALDIRILMALI
 out/
 node_modules/
 docker-compose*.yml
@@ -3776,9 +3810,9 @@ src/test/
 FROM eclipse-temurin:21-jdk-alpine AS builder
 WORKDIR /build
 # Önce dependency'leri cache'le (layer optimization)
-COPY build.gradle.kts settings.gradle.kts ./
+COPY build.gradle.kts settings.gradle.kts gradlew ./    # DÜZELTME: gradlew eksikti → build hata verirdi
 COPY gradle ./gradle
-RUN ./gradlew dependencies --no-daemon || true
+RUN chmod +x gradlew && ./gradlew dependencies --no-daemon || true
 # Sonra kodu kopyala ve build et
 COPY src ./src
 RUN ./gradlew bootJar --no-daemon
@@ -4013,6 +4047,7 @@ class AuditLog(
     val action: String,          // "CREATE_APPOINTMENT", "UPDATE_SERVICE"
     val entityType: String,      // "Appointment", "Service"
     val entityId: String,
+    @Column(columnDefinition = "JSON")                   // DÜZELTME: Hibernate validate JSON ↔ String mapping
     val details: String? = null, // JSON: değişen alanlar
     val ipAddress: String? = null,
     val createdAt: Instant = Instant.now()    // UTC timestamp
