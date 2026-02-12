@@ -1,7 +1,8 @@
 import { NextRequest } from 'next/server';
+import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { updateSiteSettingsSchema } from '@/lib/validations/settings';
-import { successResponse, handleApiError } from '@/lib/api-utils';
+import { successResponse, errorResponse, handleApiError } from '@/lib/api-utils';
 
 export async function GET() {
   try {
@@ -19,6 +20,9 @@ export async function GET() {
 
 export async function PUT(request: NextRequest) {
   try {
+    const session = await auth();
+    if (!session?.user) return errorResponse('Yetkilendirme gerekli', 401);
+
     const body = await request.json();
     const data = updateSiteSettingsSchema.parse(body);
 

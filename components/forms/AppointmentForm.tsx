@@ -18,13 +18,38 @@ const timeSlots = [
 
 export default function AppointmentForm() {
     const [step, setStep] = useState(1);
-    const { register, handleSubmit, formState: { errors } } = useForm<AppointmentFormData>();
-    const onSubmit = (data: AppointmentFormData) => {
-        console.log(data);
-        setStep(3);
+    const [submitting, setSubmitting] = useState(false);
+    const [submitError, setSubmitError] = useState<string | null>(null);
+    const { register, handleSubmit, trigger, formState: { errors } } = useForm<AppointmentFormData>();
+
+    const onSubmit = async (data: AppointmentFormData) => {
+        setSubmitting(true);
+        setSubmitError(null);
+        try {
+            const res = await fetch('/api/appointments', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ...data,
+                    message: data.message || '',
+                }),
+            });
+            if (!res.ok) {
+                const result = await res.json();
+                throw new Error(result.error || 'Bir hata oluştu');
+            }
+            setStep(3);
+        } catch (err) {
+            setSubmitError(err instanceof Error ? err.message : 'Randevu oluşturulurken bir hata oluştu');
+        } finally {
+            setSubmitting(false);
+        }
     };
 
-    const nextStep = () => setStep(step + 1);
+    const nextStep = async () => {
+        const valid = await trigger(['service', 'date', 'time']);
+        if (valid) setStep(step + 1);
+    };
     const prevStep = () => setStep(step - 1);
 
     return (
@@ -205,23 +230,31 @@ export default function AppointmentForm() {
                                             label="Notlarınız (Opsiyonel)"
                                             placeholder="Varsa eklemek istedikleriniz..."
                                             rows={4}
-                                            {...register('notes')}
+                                            {...register('message')}
                                         />
+
+                                        {submitError && (
+                                            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+                                                {submitError}
+                                            </div>
+                                        )}
 
                                         <div className="flex justify-between pt-6">
                                             <button
                                                 type="button"
                                                 onClick={prevStep}
                                                 className="btn-outline"
+                                                disabled={submitting}
                                             >
                                                 Geri Dön
                                             </button>
                                             <button
                                                 type="submit"
                                                 className="btn-primary flex items-center gap-2"
+                                                disabled={submitting}
                                             >
-                                                Randevu Oluştur
-                                                <Check className="w-4 h-4" />
+                                                {submitting ? 'Gönderiliyor...' : 'Randevu Oluştur'}
+                                                {!submitting && <Check className="w-4 h-4" />}
                                             </button>
                                         </div>
                                     </motion.div>

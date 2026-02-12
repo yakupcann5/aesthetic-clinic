@@ -4,21 +4,21 @@ import { Phone, Mail, MapPin, Facebook, Instagram, Twitter, Youtube } from 'luci
 const footerLinks = {
     hizmetler: [
         { name: 'Botoks', href: '/hizmetler/botoks' },
-        { name: 'Dolgu', href: '/hizmetler/dolgu' },
+        { name: 'Dudak Dolgusu', href: '/hizmetler/dudak-dolgusu' },
         { name: 'Lazer Epilasyon', href: '/hizmetler/lazer-epilasyon' },
-        { name: 'PRP Tedavisi', href: '/hizmetler/prp' },
+        { name: 'PRP Tedavisi', href: '/hizmetler/prp-sac-tedavisi' },
     ],
     kurumsal: [
-        { name: 'Hakkımızda', href: '/hakkimizda' },
-        { name: 'Ekibimiz', href: '/ekibimiz' },
+        { name: 'Hizmetler', href: '/hizmetler' },
+        { name: 'Ürünler', href: '/urunler' },
         { name: 'Blog', href: '/blog' },
         { name: 'İletişim', href: '/iletisim' },
     ],
     bilgi: [
-        { name: 'SSS', href: '/sss' },
-        { name: 'Gizlilik Politikası', href: '/gizlilik' },
-        { name: 'Kullanım Koşulları', href: '/kosullar' },
-        { name: 'KVKK', href: '/kvkk' },
+        { name: 'Galeri', href: '/galeri' },
+        { name: 'Randevu', href: '/randevu' },
+        { name: 'Blog', href: '/blog' },
+        { name: 'İletişim', href: '/iletisim' },
     ],
 };
 
@@ -80,7 +80,7 @@ export default function Footer() {
 
                     {/* Company */}
                     <div>
-                        <h3 className="text-white font-semibold text-lg mb-4">Kurumsal</h3>
+                        <h3 className="text-white font-semibold text-lg mb-4">Sayfalar</h3>
                         <ul className="space-y-2">
                             {footerLinks.kurumsal.map((link) => (
                                 <li key={link.name}>
@@ -129,9 +129,9 @@ export default function Footer() {
                             © {new Date().getFullYear()} Aesthetic Clinic. Tüm hakları saklıdır.
                         </p>
                         <div className="flex flex-wrap justify-center gap-4 sm:gap-6">
-                            {footerLinks.bilgi.map((link) => (
+                            {footerLinks.bilgi.map((link, index) => (
                                 <Link
-                                    key={link.name}
+                                    key={`${link.name}-${index}`}
                                     href={link.href}
                                     className="text-xs sm:text-sm text-gray-400 hover:text-primary-400 transition-colors"
                                 >

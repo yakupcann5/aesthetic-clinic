@@ -1,7 +1,8 @@
 import { NextRequest } from 'next/server';
+import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { createServiceSchema } from '@/lib/validations/service';
-import { successResponse, handleApiError } from '@/lib/api-utils';
+import { successResponse, errorResponse, handleApiError } from '@/lib/api-utils';
 
 export async function GET(request: NextRequest) {
   try {
@@ -27,6 +28,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const session = await auth();
+    if (!session?.user) return errorResponse('Yetkilendirme gerekli', 401);
+
     const body = await request.json();
     const data = createServiceSchema.parse(body);
 

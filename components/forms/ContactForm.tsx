@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Phone, Mail, MapPin, Send } from 'lucide-react';
 import Input from '@/components/common/Input';
@@ -8,10 +9,33 @@ import { useForm } from 'react-hook-form';
 import type { ContactFormData } from '@/lib/types';
 
 export default function ContactForm() {
-    const { register, handleSubmit, formState: { errors } } = useForm<ContactFormData>();
+    const { register, handleSubmit, reset, formState: { errors } } = useForm<ContactFormData>();
+    const [submitting, setSubmitting] = useState(false);
+    const [submitStatus, setSubmitStatus] = useState<'idle' | 'success' | 'error'>('idle');
+    const [submitError, setSubmitError] = useState<string | null>(null);
 
-    const onSubmit = (data: ContactFormData) => {
-        console.log(data);
+    const onSubmit = async (data: ContactFormData) => {
+        setSubmitting(true);
+        setSubmitStatus('idle');
+        setSubmitError(null);
+        try {
+            const res = await fetch('/api/contact', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+            });
+            if (!res.ok) {
+                const result = await res.json();
+                throw new Error(result.error || 'Bir hata oluştu');
+            }
+            setSubmitStatus('success');
+            reset();
+        } catch (err) {
+            setSubmitStatus('error');
+            setSubmitError(err instanceof Error ? err.message : 'Mesaj gönderilirken bir hata oluştu');
+        } finally {
+            setSubmitting(false);
+        }
     };
 
     return (
@@ -162,9 +186,19 @@ export default function ContactForm() {
                                     {...register('message', { required: 'Bu alan zorunludur' })}
                                     error={errors.message?.message as string}
                                 />
-                                <button type="submit" className="btn-primary w-full md:w-auto flex items-center justify-center gap-2 min-w-[200px]">
+                                {submitStatus === 'success' && (
+                                    <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-600">
+                                        Mesajınız başarıyla gönderildi. En kısa sürede size dönüş yapacağız.
+                                    </div>
+                                )}
+                                {submitStatus === 'error' && submitError && (
+                                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+                                        {submitError}
+                                    </div>
+                                )}
+                                <button type="submit" disabled={submitting} className="btn-primary w-full md:w-auto flex items-center justify-center gap-2 min-w-[200px] disabled:opacity-50">
                                     <Send className="w-4 h-4" />
-                                    Mesajı Gönder
+                                    {submitting ? 'Gönderiliyor...' : 'Mesajı Gönder'}
                                 </button>
                             </form>
                         </motion.div>

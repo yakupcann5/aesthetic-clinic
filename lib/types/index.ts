@@ -8,10 +8,10 @@ export interface Service {
     description: string;
     price: string;
     duration: string;
-    image: string;
+    image?: string;
     benefits: string[];
     process: string[];
-    recovery: string;
+    recovery?: string;
     beforeAfterImages?: string[];
 }
 
@@ -23,7 +23,7 @@ export interface Product {
     category: string;
     description: string;
     price: string;
-    image: string;
+    image?: string;
     features: string[];
 }
 
@@ -34,7 +34,7 @@ export interface GalleryItem {
     beforeImage: string;
     afterImage: string;
     description: string;
-    date: string;
+    date?: string;
 }
 
 export interface BlogPost {
@@ -68,7 +68,7 @@ export interface AppointmentFormData {
     service: string;
     date: string;
     time: string;
-    notes?: string;
+    message?: string;
 }
 
 export interface ContactFormData {
